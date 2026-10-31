@@ -1,0 +1,335 @@
+import Foundation
+import LiteKit
+import SwiftUI
+
+/// The app's state: servers, subscriptions and settings, saved to the App
+/// Group where the tunnel reads its config.
+///
+/// Nothing here runs on a timer. Subscriptions update when the app opens or
+/// the system grants a background refresh, rule-sets once a week, and pings
+/// only when asked.
+@MainActor
+final class AppModel: ObservableObject {
+    @Published private(set) var state: AppState
+    @Published private(set) var refreshing: Set<UUID> = []
+    @Published private(set) var pinging = false
+    /// The subscription whose header ping button started the current ping.
+    @Published private(set) var pingingSubscription: UUID?
+    @Published private(set) var updatingRuleSets = false
+    @Published var banner: Banner?
+
+    let store: SharedStore
+    let vpn: VPNController
+    let hasAppGroup: Bool
+
+    struct Banner: Identifiable, Equatable {
+        let id = UUID()
+        let text: String
+        let isError: Bool
+    }
+
+    init(vpn: VPNController) {
+        self.vpn = vpn
+        if let shared = SharedStore.shared() {
+            store = shared
+            hasAppGroup = true
+        } else {
+            // Unsigned builds have no App Group. The app still works for
+            // editing; the tunnel cannot read this folder.
+            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            store = SharedStore(container: support.appendingPathComponent("LiteTunnel", isDirectory: true))
+            hasAppGroup = false
+        }
+        try? store.prepareDirectories()
+        state = store.loadState()
+    }
+
+    var settings: AppSettings { state.settings }
+
+    func show(_ text: String, error: Bool = false) {
+        banner = Banner(text: text, isError: error)
+    }
+
+    // MARK: saving
+
+    /// Applies a change, saves it and, when the config changed while the
+    /// tunnel is up, reloads the core in place.
+    private func commit(_ change: (inout AppState) -> Void) {
+        change(&state)
+        persist()
+        applyConfig()
+    }
+
+    private func persist() {
+        do {
+            try store.save(state)
+        } catch {
+            show("Не удалось сохранить: \(error.localizedDescription)", error: true)
+        }
+    }
+
+    private func applyConfig() {
+        let before = try? store.readConfig()
+        do {
+            try store.writeConfig(for: state)
+        } catch {
+            show("Не удалось записать конфигурацию: \(error.localizedDescription)", error: true)
+            return
+        }
+        let after = try? store.readConfig()
+        guard before != after, vpn.isActive else { return }
+        if after == nil {
+            // No server left to run.
+            vpn.disconnect()
+            return
+        }
+        Task {
+            if let problem = await vpn.reload() { show(problem, error: true) }
+        }
+    }
+
+    // MARK: connection
+
+    func toggleConnection() async {
+        if vpn.isActive {
+            vpn.disconnect()
+            return
+        }
+        guard state.selectedServer != nil else {
+            show("Сначала выберите сервер", error: true)
+            return
+        }
+        guard hasAppGroup else {
+            show("Сборка без подписи: туннель не сможет прочитать настройки. Укажите команду в Config/Signing.xcconfig.", error: true)
+            return
+        }
+        applyConfig()
+        do {
+            try await vpn.connect(settings: state.settings)
+        } catch {
+            show(error.localizedDescription, error: true)
+        }
+    }
+
+    func select(_ id: UUID) {
+        guard state.selectedServerID != id else { return }
+        commit { $0.selectedServerID = id }
+    }
+
+    // MARK: settings
+
+    func setSettings(_ new: AppSettings) {
+        let old = state.settings
+        guard old != new else { return }
+        commit { $0.settings = new }
+
+        if old.killSwitch != new.killSwitch || old.excludeLocalNetworks != new.excludeLocalNetworks {
+            // These live in the system VPN profile, not in the core's config.
+            Task {
+                do {
+                    try await vpn.applyProfile(settings: new, restartIfActive: true)
+                } catch {
+                    show(error.localizedDescription, error: true)
+                }
+            }
+        }
+        if RuleSets.needed(for: old) != RuleSets.needed(for: new) {
+            Task { await updateRuleSets(force: false) }
+        }
+    }
+
+    /// A binding for settings screens: every change saves at once.
+    var settingsBinding: Binding<AppSettings> {
+        Binding(get: { self.state.settings }, set: { self.setSettings($0) })
+    }
+
+    // MARK: import
+
+    /// Pasted text, a scanned QR code or an opened link.
+    @discardableResult
+    func importText(_ text: String) async -> Bool {
+        await handle(Importer.classify(text))
+    }
+
+    func open(_ url: URL) async {
+        await handle(Importer.deepLink(url))
+    }
+
+    @discardableResult
+    private func handle(_ item: ImportItem) async -> Bool {
+        switch item {
+        case .subscription(let url, let name):
+            if let existing = state.subscriptions.first(where: { $0.url == url }) {
+                show("Эта подписка уже добавлена, обновляю")
+                await refresh(existing.id)
+                return true
+            }
+            let sub = Subscription(name: name ?? url.host ?? "Подписка", url: url)
+            commit { $0.subscriptions.append(sub) }
+            await refresh(sub.id)
+            return true
+        case .servers(let list, let skipped):
+            var added: [Server] = []
+            commit { added = $0.addManual(list) }
+            var text = added.isEmpty ? "Эти серверы уже есть" : "Добавлено серверов: \(added.count)"
+            if !skipped.isEmpty { text += ", пропущено: \(skipped.count)" }
+            show(text, error: added.isEmpty)
+            return !added.isEmpty
+        case .nothing(let reason):
+            show(reason, error: true)
+            return false
+        }
+    }
+
+    // MARK: servers and subscriptions
+
+    func removeServer(_ id: UUID) {
+        commit { $0.removeServer(id) }
+    }
+
+    func removeSubscription(_ id: UUID) {
+        commit { $0.removeSubscription(id) }
+    }
+
+    func updateSubscription(_ sub: Subscription) {
+        commit { state in
+            guard let index = state.subscriptions.firstIndex(where: { $0.id == sub.id }) else { return }
+            state.subscriptions[index] = sub
+        }
+    }
+
+    func moveServers(in subscriptionID: UUID?, from source: IndexSet, to destination: Int) {
+        commit { state in
+            var block = state.servers(in: subscriptionID)
+            block.move(fromOffsets: source, toOffset: destination)
+            var iterator = block.makeIterator()
+            state.servers = state.servers.map { $0.subscriptionID == subscriptionID ? iterator.next()! : $0 }
+        }
+    }
+
+    /// `ping` lets a caller that pings everything next skip the per-subscription one.
+    func refresh(_ id: UUID, ping: Bool = true) async {
+        guard let sub = state.subscriptions.first(where: { $0.id == id }), !refreshing.contains(id) else { return }
+        refreshing.insert(id)
+        do {
+            let result = try await SubscriptionClient().fetch(sub)
+            commit { $0.apply(result, to: id) }
+            refreshing.remove(id)
+            if ping && state.settings.pingOnUpdate { await self.ping(subscription: id) }
+        } catch {
+            refreshing.remove(id)
+            commit { state in
+                guard let index = state.subscriptions.firstIndex(where: { $0.id == id }) else { return }
+                state.subscriptions[index].lastError = error.localizedDescription
+            }
+            show("\(sub.name): \(error.localizedDescription)", error: true)
+        }
+    }
+
+    /// Subscriptions whose interval has passed. Called on open and from
+    /// background refresh.
+    func refreshDue(ping: Bool = true) async {
+        let now = Date()
+        let due = state.subscriptions.filter { $0.isDue(at: now) }.map(\.id)
+        for id in due { await refresh(id, ping: ping) }
+    }
+
+    func refreshAll() async {
+        for sub in state.subscriptions { await refresh(sub.id) }
+    }
+
+    /// When background refresh should run next: the earliest subscription due.
+    var nextRefreshDate: Date {
+        let dates = state.subscriptions.map { sub in
+            (sub.lastUpdated ?? .distantPast).addingTimeInterval(Double(max(1, sub.updateIntervalHours)) * 3600)
+        }
+        let earliest = dates.min() ?? Date().addingTimeInterval(24 * 3600)
+        // Never sooner than an hour: the system would not honour it anyway.
+        return max(earliest, Date().addingTimeInterval(3600))
+    }
+
+    // MARK: ping
+
+    func ping(_ servers: [Server]) async {
+        guard !pinging, !servers.isEmpty else { return }
+        pinging = true
+        defer { pinging = false }
+        let settings = state.settings
+        let onResult: @Sendable (UUID, PingResult?) async -> Void = { id, result in
+            await MainActor.run { self.setPing(result, for: id) }
+        }
+        if settings.pingMode.throughProxy {
+            do {
+                try await ProxyProbe.measure(servers, settings: settings, store: store, onResult: onResult)
+            } catch {
+                show("Пинг через сервер не запустился: \(error.localizedDescription). Показан TCP.", error: true)
+                await Ping.measureAll(servers, mode: .tcp, onResult: onResult)
+            }
+        } else {
+            await Ping.measureAll(servers, mode: settings.pingMode, onResult: onResult)
+        }
+        persist()
+    }
+
+    func pingAll() async {
+        await ping(state.servers)
+    }
+
+    func ping(subscription id: UUID) async {
+        guard !pinging else { return }
+        pingingSubscription = id
+        defer { pingingSubscription = nil }
+        await ping(state.servers(in: id))
+    }
+
+    private func setPing(_ result: PingResult?, for id: UUID) {
+        guard let index = state.servers.firstIndex(where: { $0.id == id }) else { return }
+        state.servers[index].lastPing = result
+    }
+
+    // MARK: rule-sets
+
+    func updateRuleSets(force: Bool) async {
+        let tags = RuleSets.needed(for: state.settings)
+        let updater = RuleSetUpdater()
+        guard !tags.isEmpty, !updatingRuleSets else { return }
+        guard force || updater.isDue(tags, in: store.ruleSetDirectory) else { return }
+        updatingRuleSets = true
+        defer { updatingRuleSets = false }
+        let failed = await updater.update(tags, into: store.ruleSetDirectory)
+        applyConfig()
+        if !failed.isEmpty {
+            show("Не удалось скачать базы: \(failed.joined(separator: ", "))", error: true)
+        } else if force {
+            show("Базы маршрутизации обновлены")
+        }
+    }
+
+    var ruleSetsReady: Bool {
+        let needed = Set(RuleSets.needed(for: state.settings))
+        return needed.isSubset(of: RuleSets.available(in: store.ruleSetDirectory))
+    }
+
+    // MARK: lifecycle
+
+    private var activating = false
+
+    /// The app came to the screen.
+    func didBecomeActive() async {
+        guard !activating else { return }
+        activating = true
+        defer { activating = false }
+        await vpn.load()
+        if vpn.isActive { await vpn.send(.wake) }
+        // Pinging everything right after covers the updated ones too.
+        await refreshDue(ping: !state.settings.pingOnOpen)
+        await updateRuleSets(force: false)
+        if state.settings.pingOnOpen { await pingAll() }
+    }
+
+    /// Background refresh: subscriptions and rule-sets only.
+    func backgroundRefresh() async {
+        await refreshDue(ping: false)
+        await updateRuleSets(force: false)
+    }
+}

@@ -1,0 +1,260 @@
+# xcodegen generate  ->  LiteTunnel.xcodeproj
+#
+# Before signing, set your own values in Config/Signing.xcconfig:
+# DEVELOPMENT_TEAM and LT_BUNDLE_PREFIX. The Packet Tunnel entitlement needs a
+# paid Apple Developer account; the tunnel does not run in the iOS Simulator.
+name: LiteTunnel
+
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "16.0"
+    macOS: "13.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEAD_CODE_STRIPPING: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    DEVELOPMENT_LANGUAGE: ru
+
+packages:
+  LiteKit:
+    path: Packages/LiteKit
+
+targetTemplates:
+  App:
+    type: application
+    sources:
+      - path: App/Shared
+      - path: App/Resources
+    dependencies:
+      - package: LiteKit
+    settings:
+      base:
+        PRODUCT_NAME: LiteTunnel
+        PRODUCT_BUNDLE_IDENTIFIER: $(LT_BUNDLE_PREFIX)
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        INFOPLIST_KEY_CFBundleDisplayName: LiteTunnel
+
+  Tunnel:
+    type: app-extension
+    sources:
+      # Both platforms' plists live here; neither belongs in the bundle.
+      - path: PacketTunnel
+        excludes: ["Info-*.plist"]
+    dependencies:
+      - package: LiteKit
+      # gomobile builds a static framework: link it, do not embed it.
+      - framework: Frameworks/Libbox.xcframework
+        embed: false
+      - sdk: libresolv.tbd
+      - sdk: Network.framework
+      - sdk: NetworkExtension.framework
+    settings:
+      base:
+        PRODUCT_NAME: PacketTunnel
+        PRODUCT_BUNDLE_IDENTIFIER: $(LT_BUNDLE_PREFIX).tunnel
+        # The Go archive is built without bitcode and has its own symbols.
+        OTHER_LDFLAGS: $(inherited) -Wl,-no_warn_duplicate_libraries
+
+targets:
+  LiteTunnel-iOS:
+    templates: [App]
+    platform: iOS
+    sources:
+      - path: App/iOS
+      # The proxy ping modes run a short-lived core in the app.
+      - path: PacketTunnel/PlatformInterface.swift
+      - path: PacketTunnel/Iterators.swift
+    dependencies:
+      - target: PacketTunnel-iOS
+      - framework: Frameworks/Libbox.xcframework
+        embed: false
+      - sdk: libresolv.tbd
+      - sdk: NetworkExtension.framework
+    info:
+      path: App/iOS/Info.plist
+      properties:
+        CFBundleDisplayName: LiteTunnel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LTAppGroup: $(LT_APP_GROUP)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSCameraUsageDescription: Камера нужна, чтобы считать QR-код сервера или подписки.
+        UIBackgroundModes: [fetch]
+        BGTaskSchedulerPermittedIdentifiers: [$(LT_BUNDLE_PREFIX).refresh]
+        CFBundleURLTypes:
+          - CFBundleURLName: $(LT_BUNDLE_PREFIX)
+            CFBundleURLSchemes: [litetunnel]
+        # Many panels hand out subscriptions as http://<ip>:<port>/sub.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: Config/LiteTunnel-iOS.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [$(LT_APP_GROUP)]
+    settings:
+      base:
+        LT_APP_GROUP: group.$(LT_BUNDLE_PREFIX)
+        TARGETED_DEVICE_FAMILY: "1,2"
+        OTHER_LDFLAGS: $(inherited) -Wl,-no_warn_duplicate_libraries
+
+  LiteTunnel-macOS:
+    templates: [App]
+    platform: macOS
+    sources:
+      - path: App/macOS
+      # Without the VPN entitlement the app runs the core itself, behind
+      # the system proxy (App/macOS/ProxyMode.swift).
+      - path: PacketTunnel/PlatformInterface.swift
+      - path: PacketTunnel/StatusReader.swift
+      - path: PacketTunnel/Iterators.swift
+      - path: ProxyHelper/ProxyHelperProtocol.swift
+    dependencies:
+      - target: PacketTunnel-macOS
+      - target: ProxyHelper
+      - framework: Frameworks/Libbox.xcframework
+        embed: false
+      - sdk: libresolv.tbd
+    info:
+      path: App/macOS/Info.plist
+      properties:
+        CFBundleDisplayName: LiteTunnel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LTAppGroup: $(LT_APP_GROUP)
+        LSApplicationCategoryType: public.app-category.utilities
+        CFBundleURLTypes:
+          - CFBundleURLName: $(LT_BUNDLE_PREFIX)
+            CFBundleURLSchemes: [litetunnel]
+        # Many panels hand out subscriptions as http://<ip>:<port>/sub.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: Config/LiteTunnel-macOS.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        # The local proxy of the system-proxy mode.
+        com.apple.security.network.server: true
+        com.apple.security.files.user-selected.read-only: true
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [$(LT_APP_GROUP)]
+    settings:
+      base:
+        LT_APP_GROUP: $(TeamIdentifierPrefix)$(LT_BUNDLE_PREFIX)
+        ENABLE_HARDENED_RUNTIME: YES
+        OTHER_LDFLAGS: $(inherited) -Wl,-no_warn_duplicate_libraries
+
+  # Sets the system proxy for the app. Outside the sandbox, where networksetup
+  # may save; it does nothing else.
+  ProxyHelper:
+    type: xpc-service
+    platform: macOS
+    sources:
+      - path: ProxyHelper
+        excludes: ["Info.plist"]
+    dependencies:
+      - sdk: SystemConfiguration.framework
+    info:
+      path: ProxyHelper/Info.plist
+      properties:
+        CFBundleDisplayName: LiteTunnel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        XPCService:
+          ServiceType: Application
+    settings:
+      base:
+        PRODUCT_NAME: ProxyHelper
+        PRODUCT_BUNDLE_IDENTIFIER: $(LT_BUNDLE_PREFIX).proxyhelper
+        ENABLE_HARDENED_RUNTIME: YES
+
+  PacketTunnel-iOS:
+    templates: [Tunnel]
+    platform: iOS
+    dependencies:
+      # libbox reads the device name through UIDevice.
+      - sdk: UIKit.framework
+    info:
+      path: PacketTunnel/Info-iOS.plist
+      properties:
+        CFBundleDisplayName: LiteTunnel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LTAppGroup: $(LT_APP_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    entitlements:
+      path: Config/PacketTunnel-iOS.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [$(LT_APP_GROUP)]
+    settings:
+      base:
+        LT_APP_GROUP: group.$(LT_BUNDLE_PREFIX)
+        TARGETED_DEVICE_FAMILY: "1,2"
+
+  PacketTunnel-macOS:
+    templates: [Tunnel]
+    platform: macOS
+    info:
+      path: PacketTunnel/Info-macOS.plist
+      properties:
+        CFBundleDisplayName: LiteTunnel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LTAppGroup: $(LT_APP_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    entitlements:
+      path: Config/PacketTunnel-macOS.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [$(LT_APP_GROUP)]
+    settings:
+      base:
+        LT_APP_GROUP: $(TeamIdentifierPrefix)$(LT_BUNDLE_PREFIX)
+        ENABLE_HARDENED_RUNTIME: YES
+
+schemes:
+  LiteTunnel-iOS:
+    build:
+      targets:
+        LiteTunnel-iOS: all
+    run:
+      config: Debug
+  LiteTunnel-macOS:
+    build:
+      targets:
+        LiteTunnel-macOS: all
+    run:
+      config: Debug

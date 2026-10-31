@@ -1,0 +1,5 @@
+// Your Apple Developer team and bundle ID prefix. The app gets
+// $(LT_BUNDLE_PREFIX), the tunnel $(LT_BUNDLE_PREFIX).tunnel, the App Group
+// group.$(LT_BUNDLE_PREFIX) on iOS and <TeamID>.$(LT_BUNDLE_PREFIX) on macOS.
+DEVELOPMENT_TEAM =
+LT_BUNDLE_PREFIX = com.example.litetunnel

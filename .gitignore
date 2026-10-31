@@ -1,0 +1,41 @@
+# Build output
+/build/
+.build-dd/
+.build-dd-ios/
+DerivedData/
+/dist/
+*.xcodeproj/
+.swiftpm/
+Packages/LiteKit/.build/
+.DS_Store
+
+# sing-box core, built by the scripts (too big for git)
+Frameworks/
+android/app/libs/*.aar
+desktop/vendor/
+
+# Signing
+*.p12
+*.mobileprovision
+*.cer
+*.jks
+*.keystore
+android/keystore/
+android/keystore.properties
+
+# Android
+android/.gradle/
+android/build/
+android/*/build/
+android/local.properties
+android/.idea/
+*.iml
+
+# Desktop (.NET)
+desktop/**/bin/
+desktop/**/obj/
+desktop/.vs/
+
+# Working notes, not part of the app
+/replica/
+/energy/
