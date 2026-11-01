@@ -16,6 +16,10 @@ if [ ! -d "$SRC" ]; then
   git clone --depth 1 --branch "$SING_BOX_TAG" https://github.com/SagerNet/sing-box.git "$SRC"
 fi
 
+# Reality against Xray 26.9+ (see the patch). Skipped when already applied.
+PATCH="$ROOT/scripts/patches/sing-box-reality-mlkem.patch"
+git -C "$SRC" apply --reverse --check "$PATCH" 2>/dev/null || git -C "$SRC" apply "$PATCH"
+
 go install "github.com/sagernet/gomobile/cmd/gomobile@$GOMOBILE_VERSION"
 go install "github.com/sagernet/gomobile/cmd/gobind@$GOMOBILE_VERSION"
 

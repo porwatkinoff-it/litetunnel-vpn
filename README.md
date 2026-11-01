@@ -43,6 +43,10 @@ xcodegen generate         # LiteTunnel.xcodeproj из project.yml
 scripts/package.sh        # dist/LiteTunnel-<версия>.ipa и .dmg
 ```
 
+Скрипты сборки ядра накладывают на sing-box правку
+[scripts/patches/sing-box-reality-mlkem.patch](scripts/patches/sing-box-reality-mlkem.patch):
+без неё VLESS Reality не подключается к серверам на Xray 26.9 и новее.
+
 Чтобы собрать настоящий VPN для своих устройств, впишите свою команду в
 `Config/Signing.xcconfig` и соберите в Xcode.
 

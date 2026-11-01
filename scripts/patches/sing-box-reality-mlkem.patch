@@ -1,0 +1,133 @@
+Reality: send X25519MLKEM768 instead of removing it.
+
+Since XTLS/REALITY 8cdf7bf (2026-09-08, in Xray 26.9) the server rejects a
+ClientHello without an X25519MLKEM768 key share before X25519, and sing-box
+1.14.4 strips that share from every fingerprint, so no sing-box client gets
+through. This keeps the share (Chrome 131+), adds it to fingerprints that
+lack it (Safari, iOS, Firefox, Edge), and signs the session ID with the key
+the server picks: the X25519 share, else the X25519 half of the hybrid one.
+Applied by scripts/build-libbox.sh and android/scripts/build-libbox-android.sh.
+
+diff --git a/common/tls/reality_client.go b/common/tls/reality_client.go
+index be4806f..ab4112a 100644
+--- a/common/tls/reality_client.go
++++ b/common/tls/reality_client.go
+@@ -23,6 +23,7 @@ import (
+ 	"net"
+ 	"net/http"
+ 	"reflect"
++	"slices"
+ 	"strings"
+ 	"time"
+ 	"unsafe"
+@@ -30,7 +31,6 @@ import (
+ 	"github.com/sagernet/sing-box/adapter"
+ 	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/option"
+-	"github.com/sagernet/sing/common"
+ 	"github.com/sagernet/sing/common/debug"
+ 	E "github.com/sagernet/sing/common/exceptions"
+ 	"github.com/sagernet/sing/common/logger"
+@@ -140,24 +140,11 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
+ 	uConfig.InsecureSkipVerify = true
+ 	uConfig.SessionTicketsDisabled = true
+ 	uConfig.VerifyPeerCertificate = verifier.VerifyPeerCertificate
+-	uConn := utls.UClient(conn, uConfig, e.uClient.id)
+-	verifier.UConn = uConn
+-	err := uConn.BuildHandshakeState()
++	uConn, err := realityUClient(conn, uConfig, e.uClient.id)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	for _, extension := range uConn.Extensions {
+-		if ce, ok := extension.(*utls.SupportedCurvesExtension); ok {
+-			ce.Curves = common.Filter(ce.Curves, func(curveID utls.CurveID) bool {
+-				return curveID != utls.X25519MLKEM768
+-			})
+-		}
+-		if ks, ok := extension.(*utls.KeyShareExtension); ok {
+-			ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
+-				return share.Group != utls.X25519MLKEM768
+-			})
+-		}
+-	}
++	verifier.UConn = uConn
+ 	err = uConn.BuildHandshakeState()
+ 	if err != nil {
+ 		return nil, err
+@@ -200,7 +187,12 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
+ 	if keyShareKeys == nil {
+ 		return nil, E.New("nil KeyShareKeys")
+ 	}
++	// The server takes the X25519 share that follows X25519MLKEM768, or the
++	// X25519 half of X25519MLKEM768 when there is none.
+ 	ecdheKey := keyShareKeys.Ecdhe
++	if ecdheKey == nil || ecdheKey.Curve() != ecdh.X25519() {
++		ecdheKey = keyShareKeys.MlkemEcdhe
++	}
+ 	if ecdheKey == nil {
+ 		return nil, E.New("nil ecdheKey")
+ 	}
+@@ -242,6 +234,62 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
+ 	return &realityClientConnWrapper{uConn}, nil
+ }
+ 
++// realityUClient builds the fingerprint's ClientHello with an X25519MLKEM768
++// key share in front of X25519. Since XTLS/REALITY 8cdf7bf (Xray 26.9) the
++// server rejects a ClientHello without one; Chrome 131+ already has it, older
++// fingerprints (Safari, iOS, Firefox, Edge) get it added. Randomized
++// fingerprints have no fixed spec, and TLS 1.2 ones no key share: both are
++// left as they are.
++func realityUClient(conn net.Conn, config *utls.Config, id utls.ClientHelloID) (*utls.UConn, error) {
++	spec, err := utls.UTLSIdToSpec(id)
++	if err != nil || !slices.ContainsFunc(spec.Extensions, func(extension utls.TLSExtension) bool {
++		_, isKeyShare := extension.(*utls.KeyShareExtension)
++		return isKeyShare
++	}) {
++		return utls.UClient(conn, config, id), nil
++	}
++	for _, extension := range spec.Extensions {
++		switch ext := extension.(type) {
++		case *utls.SupportedCurvesExtension:
++			if !slices.Contains(ext.Curves, utls.X25519MLKEM768) {
++				ext.Curves = slices.Insert(ext.Curves, realityHybridIndex(ext.Curves, func(curveID utls.CurveID) utls.CurveID {
++					return curveID
++				}), utls.X25519MLKEM768)
++			}
++		case *utls.KeyShareExtension:
++			if !slices.ContainsFunc(ext.KeyShares, func(share utls.KeyShare) bool {
++				return share.Group == utls.X25519MLKEM768
++			}) {
++				ext.KeyShares = slices.Insert(ext.KeyShares, realityHybridIndex(ext.KeyShares, func(share utls.KeyShare) utls.CurveID {
++					return share.Group
++				}), utls.KeyShare{Group: utls.X25519MLKEM768})
++			}
++		}
++	}
++	uConn := utls.UClient(conn, config, utls.HelloCustom)
++	err = uConn.ApplyPreset(&spec)
++	if err != nil {
++		return nil, err
++	}
++	return uConn, nil
++}
++
++// realityHybridIndex is where X25519MLKEM768 goes: before X25519, else after
++// the leading GREASE entries.
++func realityHybridIndex[T any](items []T, group func(T) utls.CurveID) int {
++	index := slices.IndexFunc(items, func(item T) bool {
++		return group(item) == utls.X25519
++	})
++	if index >= 0 {
++		return index
++	}
++	index = 0
++	for index < len(items) && group(items[index]) == utls.GREASE_PLACEHOLDER {
++		index++
++	}
++	return index
++}
++
+ func realityClientFallback(ctx context.Context, uConn net.Conn, serverName string, fingerprint utls.ClientHelloID) {
+ 	defer uConn.Close()
+ 	client := &http.Client{
