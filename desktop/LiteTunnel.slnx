@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LiteTunnel.App/LiteTunnel.App.csproj" />
+    <Project Path="src/LiteTunnel.Core/LiteTunnel.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LiteTunnel.Core.Tests/LiteTunnel.Core.Tests.csproj" />
+  </Folder>
+</Solution>

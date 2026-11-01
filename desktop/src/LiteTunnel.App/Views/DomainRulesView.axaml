@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:LiteTunnel.App.ViewModels"
+             xmlns:c="using:LiteTunnel.App.Controls"
+             x:Class="LiteTunnel.App.Views.DomainRulesView"
+             x:DataType="vm:DomainRulesViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel MaxWidth="640" Margin="0,0,0,32">
+      <!-- Через VPN, напрямую, блокировать -->
+      <ItemsControl ItemsSource="{Binding Lists}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:DomainList">
+            <StackPanel>
+              <TextBlock Classes="header" Text="{Binding Title}" />
+              <Border Classes="group">
+                <StackPanel>
+                  <DockPanel Classes="row">
+                    <Button DockPanel.Dock="Right" Classes="plain icon" Command="{Binding Add}"
+                            Margin="8,0,0,0"
+                            ToolTip.Tip="Добавить" AutomationProperties.Name="Добавить домен">
+                      <c:Icon Data="{StaticResource Icon.add}" />
+                    </Button>
+                    <TextBox Text="{Binding Draft}" Watermark="example.com"
+                             VerticalAlignment="Center"
+                             AutomationProperties.Name="{Binding Title}">
+                      <TextBox.KeyBindings>
+                        <KeyBinding Gesture="Enter" Command="{Binding Add}" />
+                      </TextBox.KeyBindings>
+                    </TextBox>
+                  </DockPanel>
+                  <ItemsControl ItemsSource="{Binding Items}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:DomainItem">
+                        <StackPanel>
+                          <Rectangle Classes="sep" />
+                          <DockPanel Classes="row">
+                            <Button DockPanel.Dock="Right" Classes="plain icon" Command="{Binding Delete}"
+                                    ToolTip.Tip="Удалить" AutomationProperties.Name="Удалить">
+                              <c:Icon Classes="danger" Data="{StaticResource Icon.delete}" />
+                            </Button>
+                            <TextBlock Classes="body" Text="{Binding Domain}" TextTrimming="CharacterEllipsis" />
+                          </DockPanel>
+                        </StackPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+              <TextBlock Classes="footer" Text="{Binding Hint}" />
+            </StackPanel>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+      <TextBlock Classes="footer" Margin="32,20,32,0"
+                 Text="Правило действует на домен и все его поддомены. Блокировка важнее остальных, «через VPN» важнее «напрямую»." />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

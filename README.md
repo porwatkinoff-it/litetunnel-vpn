@@ -32,6 +32,8 @@ macOS, Android, Windows и Linux. Без своего сервера и акка
 | `LiteTunnel-<версия>.dmg` | macOS 13+ | Перетащите в «Программы». Первый запуск: правый клик → «Открыть». Сборка без платного аккаунта Apple, поэтому работает как системный прокси, а не как VPN. |
 | `LiteTunnel-<версия>.ipa` | iOS 16+ | Подписана ad-hoc. На обычный iPhone её нужно переподписать своим аккаунтом разработчика (VPN требует платный), без этого ставится только через TrollStore. |
 | `LiteTunnel-<версия>.apk` | Android 8+ | Откройте файл на телефоне и разрешите установку из этого источника. |
+| `LiteTunnel-<версия>-windows-x64.zip` | Windows 10+, x64 | Распакуйте и запустите `LiteTunnel.exe`. Программа не подписана: на «Система Windows защитила ваш компьютер» нажмите «Подробнее» → «Выполнить в любом случае». |
+| `LiteTunnel-<версия>-linux-x64.tar.gz` | Linux, x64 | Распакуйте и запустите `./install.sh` (с `--setcap` режим VPN включается без пароля). |
 
 ## Сборка из исходников
 
@@ -57,7 +59,15 @@ android/scripts/build-libbox-android.sh   # ядро → android/app/libs/libbox
 cd android && ./gradlew assembleRelease
 ```
 
-Тесты общей логики: `cd Packages/LiteKit && swift test`.
+Windows и Linux (нужны .NET 10 SDK и Go):
+
+```bash
+desktop/scripts/build-sing-box.sh   # ядро → desktop/vendor/
+desktop/scripts/package.sh          # dist/LiteTunnel-<версия>-windows-x64.zip и -linux-x64.tar.gz
+```
+
+Тесты общей логики: `cd Packages/LiteKit && swift test`, для Windows и Linux:
+`dotnet test desktop/tests/LiteTunnel.Core.Tests`.
 
 ## Лицензия
 

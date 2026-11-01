@@ -1,0 +1,21 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:LiteTunnel.App.ViewModels"
+             x:Class="LiteTunnel.App.Views.UsageView"
+             x:DataType="vm:UsageLine">
+  <!-- Traffic used of the plan, and when it ends -->
+  <StackPanel Spacing="4">
+    <ProgressBar Minimum="0" Maximum="100"
+                 Value="{Binding Percent}"
+                 IsVisible="{Binding HasBar}"
+                 Classes.danger="{Binding IsHigh}" />
+    <DockPanel>
+      <TextBlock DockPanel.Dock="Right" Classes="caption secondary"
+                 Classes.danger="{Binding IsExpired}"
+                 Text="{Binding Expiry}"
+                 IsVisible="{Binding HasExpiry}"
+                 Margin="12,0,0,0" />
+      <TextBlock Classes="caption secondary tabular" Text="{Binding Text}" TextTrimming="CharacterEllipsis" />
+    </DockPanel>
+  </StackPanel>
+</UserControl>

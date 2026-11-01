@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:LiteTunnel.App.ViewModels"
+             x:Class="LiteTunnel.App.Views.LogsView"
+             x:DataType="vm:LogsViewModel">
+  <Panel>
+    <StackPanel IsVisible="{Binding IsEmpty}" Spacing="6" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32">
+      <TextBlock Classes="headline" Text="Журнал пуст" HorizontalAlignment="Center" />
+      <TextBlock Classes="callout secondary" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="320"
+                 Text="Сюда ядро пишет, что происходит с подключением. Подробность меняется в настройках." />
+    </StackPanel>
+    <ScrollViewer Name="Scroller" HorizontalScrollBarVisibility="Disabled" IsVisible="{Binding !IsEmpty}">
+      <Border Classes="group" Margin="16,0,16,24" Padding="12,8" MaxWidth="900">
+        <ItemsControl ItemsSource="{Binding Lines}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:LogLine">
+              <SelectableTextBlock Classes="caption mono"
+                                   Classes.danger="{Binding IsError}"
+                                   Classes.warn="{Binding IsWarningOnly}"
+                                   Text="{Binding Text}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,1" />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+    </ScrollViewer>
+  </Panel>
+</UserControl>

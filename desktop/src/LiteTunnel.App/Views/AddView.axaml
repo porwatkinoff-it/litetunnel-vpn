@@ -1,0 +1,38 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:LiteTunnel.App.ViewModels"
+             x:Class="LiteTunnel.App.Views.AddView"
+             x:DataType="vm:AddViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel MaxWidth="640" Margin="0,8,0,32">
+      <Border Classes="group">
+        <StackPanel>
+          <Button Classes="plain row accent" Command="{Binding Paste}">
+            <TextBlock Classes="body" Text="Вставить из буфера обмена" />
+          </Button>
+          <Rectangle Classes="sep" />
+          <Button Classes="plain row accent" Command="{Binding FromImage}">
+            <TextBlock Classes="body" Text="QR-код из картинки" />
+          </Button>
+        </StackPanel>
+      </Border>
+      <TextBlock Classes="footer" Text="Ссылка на подписку или серверы: vless://, vmess://, trojan://, ss://, hy2://. Можно несколько, по одной на строку." />
+
+      <TextBlock Classes="header" Text="Или введите вручную" />
+      <Border Classes="group" Padding="12">
+        <TextBox Text="{Binding Text}"
+                 AcceptsReturn="True"
+                 TextWrapping="Wrap"
+                 MinHeight="120" MaxHeight="280"
+                 Classes="mono"
+                 FontSize="12"
+                 Watermark="https://… или vless://…"
+                 AutomationProperties.Name="Ссылки" />
+      </Border>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10" Margin="0,16,0,0">
+        <Path Classes="spinner" IsVisible="{Binding IsWorking}" VerticalAlignment="Center" />
+        <Button Classes="accent" Content="Добавить" Command="{Binding AddText}" />
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

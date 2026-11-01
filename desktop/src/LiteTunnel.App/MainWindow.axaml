@@ -1,0 +1,120 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:LiteTunnel.App.ViewModels"
+        xmlns:v="using:LiteTunnel.App.Views"
+        xmlns:c="using:LiteTunnel.App.Controls"
+        x:Class="LiteTunnel.App.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="LiteTunnel"
+        Icon="avares://LiteTunnel/Assets/LiteTunnel.ico"
+        Width="480" Height="760"
+        MinWidth="420" MinHeight="640"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource Brush.Background}">
+
+  <Window.DataTemplates>
+    <DataTemplate DataType="vm:HomeViewModel"><v:HomeView /></DataTemplate>
+    <DataTemplate DataType="vm:SettingsViewModel"><v:SettingsView /></DataTemplate>
+    <DataTemplate DataType="vm:DomainRulesViewModel"><v:DomainRulesView /></DataTemplate>
+    <DataTemplate DataType="vm:AddViewModel"><v:AddView /></DataTemplate>
+    <DataTemplate DataType="vm:SubscriptionEditViewModel"><v:SubscriptionEditView /></DataTemplate>
+    <DataTemplate DataType="vm:ServerDetailViewModel"><v:ServerDetailView /></DataTemplate>
+    <DataTemplate DataType="vm:LogsViewModel"><v:LogsView /></DataTemplate>
+  </Window.DataTemplates>
+
+  <Panel>
+    <DockPanel>
+      <!-- Header: back or Отмена, the title, the page's tools -->
+      <Grid DockPanel.Dock="Top" Height="52" Margin="8,0">
+        <TextBlock Classes="headline"
+                   Text="{Binding Current.Title}"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis"
+                   Margin="132,0" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+          <Button Classes="plain tool"
+                  IsVisible="{Binding ShowBackArrow}"
+                  Command="{Binding Back}"
+                  ToolTip.Tip="Назад"
+                  AutomationProperties.Name="Назад">
+            <c:Icon Data="{StaticResource Icon.arrow_back}" />
+          </Button>
+          <Button Classes="plain tool"
+                  IsVisible="{Binding ShowCancel}"
+                  Command="{Binding Back}">
+            <TextBlock Text="Отмена" />
+          </Button>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="2">
+          <ItemsControl ItemsSource="{Binding Current.Actions}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Orientation="Horizontal" Spacing="2" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ToolAction">
+                <Button Classes="plain tool"
+                        Command="{Binding Command}"
+                        ToolTip.Tip="{Binding Tip}"
+                        AutomationProperties.Name="{Binding Tip}">
+                  <Panel>
+                    <c:Icon Data="{Binding Icon}" IsVisible="{Binding HasIcon}" />
+                    <TextBlock Text="{Binding Text}" IsVisible="{Binding HasText}" />
+                  </Panel>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <Button Classes="plain tool strong"
+                  IsVisible="{Binding Current.Done, Converter={x:Static ObjectConverters.IsNotNull}}"
+                  Command="{Binding Current.Done.Command, FallbackValue={x:Null}}"
+                  ToolTip.Tip="{Binding Current.Done.Tip, FallbackValue={x:Null}}">
+            <TextBlock Text="{Binding Current.Done.Text, FallbackValue={x:Null}}" />
+          </Button>
+        </StackPanel>
+      </Grid>
+
+      <ContentControl Content="{Binding Current}"
+                      HorizontalContentAlignment="Stretch"
+                      VerticalContentAlignment="Stretch" />
+    </DockPanel>
+
+    <!-- Short notes: an import went through, an error -->
+    <Border Name="BannerBox"
+            Classes="banner"
+            VerticalAlignment="Bottom"
+            Margin="16,0,16,20"
+            Cursor="Hand"
+            IsVisible="{Binding Model.Banner, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <DockPanel>
+        <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center"
+                 Classes.danger="{Binding Model.Banner.IsError, FallbackValue=False}"
+                 Classes.connected="{Binding !Model.Banner.IsError, FallbackValue=True}" />
+        <TextBlock Classes="callout" TextWrapping="Wrap" Text="{Binding Model.Banner.Text, FallbackValue={x:Null}}" />
+      </DockPanel>
+    </Border>
+
+    <!-- A question before something that cannot be undone -->
+    <Panel Name="Scrim" IsVisible="{Binding IsAsking}" Background="{DynamicResource Brush.Scrim}">
+      <Border Background="{DynamicResource Brush.Surface}"
+              CornerRadius="14"
+              MaxWidth="340"
+              Margin="24"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              BoxShadow="0 8 32 0 #40000000">
+        <StackPanel>
+          <TextBlock Classes="body" Text="{Binding Question}" TextWrapping="Wrap" TextAlignment="Center" Margin="20,20,20,16" />
+          <Rectangle Classes="sep" Margin="0" />
+          <Button Name="ConfirmButton" Classes="plain row danger" Command="{Binding ConfirmYes}" HorizontalContentAlignment="Center">
+            <TextBlock Classes="body" FontWeight="SemiBold" Text="{Binding Answer}" />
+          </Button>
+          <Rectangle Classes="sep" Margin="0" />
+          <Button Classes="plain row accent" Command="{Binding ConfirmNo}" HorizontalContentAlignment="Center">
+            <TextBlock Classes="body" Text="Отмена" />
+          </Button>
+        </StackPanel>
+      </Border>
+    </Panel>
+  </Panel>
+</Window>

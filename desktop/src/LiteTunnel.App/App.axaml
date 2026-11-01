@@ -1,0 +1,54 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="LiteTunnel.App.App"
+             Name="LiteTunnel"
+             RequestedThemeVariant="Default">
+  <Application.Resources>
+    <ResourceDictionary>
+      <!-- design/tokens.json -->
+      <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+          <SolidColorBrush x:Key="Brush.Accent" Color="#1EB082" />
+          <SolidColorBrush x:Key="Brush.Connected" Color="#34C759" />
+          <SolidColorBrush x:Key="Brush.Busy" Color="#FF9500" />
+          <SolidColorBrush x:Key="Brush.Danger" Color="#FF3B30" />
+          <SolidColorBrush x:Key="Brush.Background" Color="#F2F2F7" />
+          <SolidColorBrush x:Key="Brush.Surface" Color="#FFFFFF" />
+          <SolidColorBrush x:Key="Brush.Text" Color="#000000" />
+          <SolidColorBrush x:Key="Brush.TextSecondary" Color="#6C6C70" />
+          <SolidColorBrush x:Key="Brush.Separator" Color="#C6C6C8" />
+          <SolidColorBrush x:Key="Brush.Hover" Color="#0D000000" />
+          <SolidColorBrush x:Key="Brush.Pressed" Color="#1A000000" />
+          <SolidColorBrush x:Key="Brush.Scrim" Color="#66000000" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+          <SolidColorBrush x:Key="Brush.Accent" Color="#33CC99" />
+          <SolidColorBrush x:Key="Brush.Connected" Color="#30D158" />
+          <SolidColorBrush x:Key="Brush.Busy" Color="#FF9F0A" />
+          <SolidColorBrush x:Key="Brush.Danger" Color="#FF453A" />
+          <SolidColorBrush x:Key="Brush.Background" Color="#000000" />
+          <SolidColorBrush x:Key="Brush.Surface" Color="#1C1C1E" />
+          <SolidColorBrush x:Key="Brush.Text" Color="#FFFFFF" />
+          <SolidColorBrush x:Key="Brush.TextSecondary" Color="#8E8E93" />
+          <SolidColorBrush x:Key="Brush.Separator" Color="#38383A" />
+          <SolidColorBrush x:Key="Brush.Hover" Color="#14FFFFFF" />
+          <SolidColorBrush x:Key="Brush.Pressed" Color="#26FFFFFF" />
+          <SolidColorBrush x:Key="Brush.Scrim" Color="#99000000" />
+        </ResourceDictionary>
+      </ResourceDictionary.ThemeDictionaries>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="/Styles/Icons.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <Application.Styles>
+    <FluentTheme>
+      <FluentTheme.Palettes>
+        <ColorPaletteResources x:Key="Light" Accent="#1EB082" RegionColor="#F2F2F7" />
+        <ColorPaletteResources x:Key="Dark" Accent="#33CC99" RegionColor="#000000" />
+      </FluentTheme.Palettes>
+    </FluentTheme>
+    <StyleInclude Source="/Styles/Controls.axaml" />
+  </Application.Styles>
+</Application>

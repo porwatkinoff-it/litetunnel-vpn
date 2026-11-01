@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=LiteTunnel
+GenericName=VPN
+Comment=VPN-клиент: подписки, VLESS, Hysteria2, Trojan, Shadowsocks
+Exec=@EXEC@ %u
+Icon=litetunnel
+Terminal=false
+Categories=Network;
+Keywords=vpn;proxy;vless;reality;hysteria;
+MimeType=x-scheme-handler/litetunnel;
+StartupWMClass=LiteTunnel
+SingleMainWindow=true

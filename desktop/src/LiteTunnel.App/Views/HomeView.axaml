@@ -1,0 +1,172 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:LiteTunnel.App.ViewModels"
+             xmlns:v="using:LiteTunnel.App.Views"
+             xmlns:c="using:LiteTunnel.App.Controls"
+             x:Class="LiteTunnel.App.Views.HomeView"
+             x:DataType="vm:HomeViewModel">
+  <UserControl.Styles>
+    <!-- No line under the last server of a section -->
+    <Style Selector="ContentPresenter:nth-last-child(1) > StackPanel > Rectangle.rowsep">
+      <Setter Property="IsVisible" Value="False" />
+    </Style>
+  </UserControl.Styles>
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel MaxWidth="640" Margin="0,0,0,24">
+
+      <!-- Connect card -->
+      <StackPanel Spacing="8" Margin="16,12" HorizontalAlignment="Center">
+        <Button Classes="plain power"
+                Classes.on="{Binding IsOn}"
+                Classes.busy="{Binding IsBusy}"
+                Command="{Binding Toggle}"
+                Width="112" Height="112" Padding="0"
+                ToolTip.Tip="{Binding PowerTip}"
+                AutomationProperties.Name="{Binding PowerTip}">
+          <Panel Width="112" Height="112">
+            <Ellipse Classes="fill" />
+            <Ellipse Classes="ring" StrokeThickness="3" Margin="1.5" />
+            <c:Icon Data="{StaticResource Icon.power}" Size="38" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Panel>
+        </Button>
+        <TextBlock Classes="title"
+                   Classes.connected="{Binding IsOn}"
+                   Classes.busy="{Binding IsBusy}"
+                   Text="{Binding StatusText}"
+                   HorizontalAlignment="Center" Margin="0,4,0,0" />
+        <TextBlock Classes="callout secondary tabular"
+                   Text="{Binding Elapsed}"
+                   IsVisible="{Binding ShowElapsed}"
+                   HorizontalAlignment="Center" />
+        <StackPanel HorizontalAlignment="Center" Spacing="2">
+          <TextBlock Classes="callout" Text="{Binding ServerName}" TextTrimming="CharacterEllipsis" MaxWidth="360" HorizontalAlignment="Center" />
+          <TextBlock Classes="caption secondary" Text="{Binding ServerProto}" IsVisible="{Binding HasServer}" HorizontalAlignment="Center" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="20" HorizontalAlignment="Center" IsVisible="{Binding ShowTraffic}">
+          <StackPanel Orientation="Horizontal" Spacing="4" ToolTip.Tip="Отправлено">
+            <c:Icon Classes="secondary" Data="{StaticResource Icon.arrow_up}" Size="14" VerticalAlignment="Center" />
+            <TextBlock Classes="caption tabular" Text="{Binding UpSpeed}" />
+            <TextBlock Classes="caption secondary tabular" Text="{Binding UpTotal}" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="4" ToolTip.Tip="Получено">
+            <c:Icon Classes="secondary" Data="{StaticResource Icon.arrow_down}" Size="14" VerticalAlignment="Center" />
+            <TextBlock Classes="caption tabular" Text="{Binding DownSpeed}" />
+            <TextBlock Classes="caption secondary tabular" Text="{Binding DownTotal}" />
+          </StackPanel>
+        </StackPanel>
+      </StackPanel>
+
+      <!-- Empty state -->
+      <StackPanel IsVisible="{Binding IsEmpty}" Spacing="12" Margin="32,24" HorizontalAlignment="Center">
+        <c:Icon Classes="secondary" Data="{StaticResource Icon.dns}" Size="56" HorizontalAlignment="Center" />
+        <TextBlock Classes="headline" Text="Серверов пока нет" HorizontalAlignment="Center" />
+        <TextBlock Classes="callout secondary"
+                   Text="Добавьте ссылку на подписку или сервер: vless://, hy2://, trojan://, ss:// и другие."
+                   TextWrapping="Wrap" TextAlignment="Center" MaxWidth="360" />
+        <Button Classes="accent" Content="Добавить" Command="{Binding Add}" HorizontalAlignment="Center" Margin="0,8,0,0" />
+      </StackPanel>
+
+      <!-- Subscriptions, then the servers added by hand -->
+      <ItemsControl ItemsSource="{Binding Sections}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:SectionViewModel">
+            <StackPanel Margin="0,12,0,0">
+              <!-- Header -->
+              <DockPanel Margin="20,8,16,6">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsSubscription}" VerticalAlignment="Center">
+                  <Button Classes="plain icon" Command="{Binding Ping}" ToolTip.Tip="Пинг подписки" AutomationProperties.Name="Пинг подписки">
+                    <Panel Width="20" Height="20">
+                      <c:Icon Data="{StaticResource Icon.bolt}" IsVisible="{Binding ShowPingIcon}" />
+                      <Path Classes="spinner" IsVisible="{Binding IsPinging}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Panel>
+                  </Button>
+                  <Button Classes="plain icon" Command="{Binding Refresh}" ToolTip.Tip="Обновить подписку" AutomationProperties.Name="Обновить подписку">
+                    <Panel Width="20" Height="20">
+                      <c:Icon Data="{StaticResource Icon.refresh}" IsVisible="{Binding ShowRefreshIcon}" />
+                      <Path Classes="spinner" IsVisible="{Binding IsRefreshing}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Panel>
+                  </Button>
+                  <Button Classes="plain icon" ToolTip.Tip="Ещё" AutomationProperties.Name="Ещё">
+                    <c:Icon Data="{StaticResource Icon.more}" />
+                    <Button.Flyout>
+                      <MenuFlyout Placement="BottomEdgeAlignedRight">
+                        <MenuItem Header="Настроить" Command="{Binding Edit}" />
+                        <MenuItem Header="Поддержка" Command="{Binding OpenSupport}" IsVisible="{Binding HasSupport}" />
+                        <MenuItem Header="Сайт провайдера" Command="{Binding OpenSite}" IsVisible="{Binding HasSite}" />
+                        <Separator />
+                        <MenuItem Header="Удалить подписку" Command="{Binding Delete}" Foreground="{DynamicResource Brush.Danger}" />
+                      </MenuFlyout>
+                    </Button.Flyout>
+                  </Button>
+                </StackPanel>
+                <TextBlock Classes="headline" Text="{Binding Title}" IsVisible="{Binding IsManual}" VerticalAlignment="Center" />
+                <Button Classes="plain" Command="{Binding ToggleFold}" IsVisible="{Binding IsSubscription}"
+                        Padding="0" HorizontalAlignment="Left"
+                        AutomationProperties.Name="{Binding Title}"
+                        AutomationProperties.HelpText="{Binding FoldState}">
+                  <StackPanel Orientation="Horizontal" Spacing="4">
+                    <TextBlock Classes="headline" Text="{Binding Title}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <c:Icon Classes="chevron" Classes.folded="{Binding IsFolded}"
+                            Data="{StaticResource Icon.expand_more}" Size="20"
+                            RenderTransformOrigin="50%,50%" VerticalAlignment="Center" />
+                  </StackPanel>
+                </Button>
+              </DockPanel>
+
+              <Panel IsVisible="{Binding HasUsage}" Margin="20,0,20,6">
+                <v:UsageView DataContext="{Binding Usage}" />
+              </Panel>
+              <TextBlock Classes="caption danger" Text="{Binding Error}" IsVisible="{Binding HasError}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" Margin="20,0,20,8" />
+              <TextBlock Classes="caption secondary" Text="{Binding Updated}" IsVisible="{Binding HasUpdated}" Margin="20,0,20,8" />
+
+              <Border Classes="group" IsVisible="{Binding IsOpen}">
+                <StackPanel>
+                  <DockPanel IsVisible="{Binding HasAnnounce}" Margin="16,10">
+                    <c:Icon DockPanel.Dock="Left" Classes="secondary" Data="{StaticResource Icon.campaign}" Size="16" Margin="0,0,8,0" VerticalAlignment="Top" />
+                    <SelectableTextBlock Classes="caption" Foreground="{DynamicResource Brush.TextSecondary}" Text="{Binding Announce}" TextWrapping="Wrap" />
+                  </DockPanel>
+                  <Rectangle Classes="sep" IsVisible="{Binding HasAnnounce}" />
+                  <ItemsControl ItemsSource="{Binding Rows}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:ServerRowViewModel">
+                        <StackPanel>
+                          <Button Classes="plain row" Command="{Binding Select}" Padding="16,6,8,6"
+                                  AutomationProperties.Name="{Binding Name}">
+                            <Button.ContextMenu>
+                              <ContextMenu>
+                                <MenuItem Header="Подробнее" Command="{Binding Info}" />
+                                <MenuItem Header="Проверить пинг" Command="{Binding PingThis}" />
+                                <MenuItem Header="Копировать ссылку" Command="{Binding CopyLink}" IsVisible="{Binding HasShareLink}" />
+                                <MenuItem Header="Удалить" Command="{Binding Delete}" IsVisible="{Binding CanDelete}" Foreground="{DynamicResource Brush.Danger}" />
+                              </ContextMenu>
+                            </Button.ContextMenu>
+                            <DockPanel>
+                              <Panel DockPanel.Dock="Left" Width="22" Margin="0,0,12,0" VerticalAlignment="Center">
+                                <c:Icon Classes="accent" Data="{StaticResource Icon.check_circle}" Size="22" IsVisible="{Binding IsSelected}" />
+                                <c:Icon Classes="secondary" Data="{StaticResource Icon.unchecked}" Size="22" IsVisible="{Binding IsNotSelected}" />
+                              </Panel>
+                              <Button DockPanel.Dock="Right" Classes="plain icon" Command="{Binding Info}" Margin="6,0,0,0"
+                                      ToolTip.Tip="Подробнее" AutomationProperties.Name="Подробнее">
+                                <c:Icon Data="{StaticResource Icon.info}" />
+                              </Button>
+                              <c:PingBadge DockPanel.Dock="Right" Ping="{Binding Ping}" Display="{Binding Display}" Margin="8,0,0,0" />
+                              <StackPanel VerticalAlignment="Center" Spacing="1">
+                                <TextBlock Classes="body" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Classes="caption secondary" Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis" />
+                              </StackPanel>
+                            </DockPanel>
+                          </Button>
+                          <Rectangle Classes="sep rowsep" Margin="50,0,0,0" />
+                        </StackPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

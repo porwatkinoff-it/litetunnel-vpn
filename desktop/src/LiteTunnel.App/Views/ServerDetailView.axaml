@@ -1,0 +1,129 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:LiteTunnel.App.ViewModels"
+             xmlns:c="using:LiteTunnel.App.Controls"
+             x:Class="LiteTunnel.App.Views.ServerDetailView"
+             x:DataType="vm:ServerDetailViewModel">
+  <Panel>
+    <TextBlock Classes="body secondary" Text="Сервер удалён" IsVisible="{Binding IsMissing}"
+               HorizontalAlignment="Center" VerticalAlignment="Center" />
+
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" IsVisible="{Binding Exists}">
+      <StackPanel MaxWidth="640" Margin="0,0,0,32">
+
+        <!-- QR code for adding the server on another device -->
+        <StackPanel IsVisible="{Binding HasShareLink}" Margin="0,12,0,0">
+          <Border Background="White" CornerRadius="12" Padding="12" HorizontalAlignment="Center">
+            <c:QrView Text="{Binding ShareLink}" Width="200" Height="200" />
+          </Border>
+          <TextBlock Classes="footer" TextAlignment="Center"
+                     Text="Отсканируйте на другом устройстве, чтобы добавить этот сервер." />
+        </StackPanel>
+
+        <TextBlock Classes="header" Text="Сервер" />
+        <Border Classes="group">
+          <StackPanel>
+            <Grid Classes="row" ColumnDefinitions="Auto,*">
+              <TextBlock Classes="body" Text="Протокол" />
+              <TextBlock Grid.Column="1" Classes="body secondary" Text="{Binding Protocol}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" Margin="12,0,0,0" />
+            </Grid>
+            <StackPanel IsVisible="{Binding IsSingle}">
+              <Rectangle Classes="sep" />
+              <Grid Classes="row" ColumnDefinitions="Auto,*">
+                <TextBlock Classes="body" Text="Адрес" />
+                <SelectableTextBlock Grid.Column="1" Classes="tabular" Foreground="{DynamicResource Brush.TextSecondary}" FontSize="14"
+                                     Text="{Binding Address}" HorizontalAlignment="Right" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="12,0,0,0" />
+              </Grid>
+              <Rectangle Classes="sep" />
+              <Grid Classes="row" ColumnDefinitions="Auto,*">
+                <TextBlock Classes="body" Text="Транспорт" />
+                <TextBlock Grid.Column="1" Classes="body secondary" Text="{Binding Transport}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" Margin="12,0,0,0" />
+              </Grid>
+            </StackPanel>
+            <Rectangle Classes="sep" />
+            <Grid Classes="row" ColumnDefinitions="*,Auto">
+              <TextBlock Classes="body" Text="Пинг" />
+              <TextBlock Grid.Column="1" Classes="body tabular"
+                         Classes.connected="{Binding PingGood}"
+                         Classes.busy="{Binding PingSlow}"
+                         Classes.danger="{Binding PingBad}"
+                         Classes.secondary="{Binding PingUnknown}"
+                         Text="{Binding PingText}" />
+            </Grid>
+            <StackPanel IsVisible="{Binding HasSubscription}">
+              <Rectangle Classes="sep" />
+              <Grid Classes="row" ColumnDefinitions="Auto,*">
+                <TextBlock Classes="body" Text="Подписка" />
+                <TextBlock Grid.Column="1" Classes="body secondary" Text="{Binding SubscriptionName}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" Margin="12,0,0,0" />
+              </Grid>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- Balancer group: what the core picks from -->
+        <StackPanel IsVisible="{Binding HasMembers}">
+          <TextBlock Classes="header" Text="{Binding MembersTitle}" />
+          <Border Classes="group">
+            <ItemsControl ItemsSource="{Binding Members}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:MemberRow">
+                  <StackPanel>
+                    <StackPanel Margin="16,8" Spacing="1" MinHeight="32">
+                      <TextBlock Classes="body tabular" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Classes="caption secondary" Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <Rectangle Classes="sep" />
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </Border>
+          <TextBlock Classes="footer" Text="Ядро само выбирает самый быстрый и переходит на другой, если этот перестал отвечать. Проверка раз в 10 минут." />
+        </StackPanel>
+
+        <Border Classes="group" Margin="16,24,16,0">
+          <StackPanel>
+            <Button Classes="plain row accent" Command="{Binding Select}" IsEnabled="{Binding !IsSelected}">
+              <TextBlock Classes="body" Text="{Binding SelectTitle}" />
+            </Button>
+            <Rectangle Classes="sep" />
+            <Button Classes="plain row accent" Command="{Binding PingThis}">
+              <TextBlock Classes="body" Text="Проверить пинг" />
+            </Button>
+            <StackPanel IsVisible="{Binding HasShareLink}">
+              <Rectangle Classes="sep" />
+              <Button Classes="plain row accent" Command="{Binding CopyLink}">
+                <TextBlock Classes="body" Text="Копировать ссылку" />
+              </Button>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- The core's outbound, for checking what an import produced -->
+        <Border Classes="group" Margin="16,24,16,0">
+          <StackPanel>
+            <Button Classes="plain row" Command="{Binding ToggleJson}">
+              <DockPanel>
+                <c:Icon DockPanel.Dock="Right" Classes="chevron secondary" Classes.folded="{Binding !IsJsonOpen}"
+                        Data="{StaticResource Icon.expand_more}" Size="18"
+                        RenderTransformOrigin="50%,50%" VerticalAlignment="Center" />
+                <TextBlock Classes="body" Text="Настройки для ядра (JSON)" VerticalAlignment="Center" />
+              </DockPanel>
+            </Button>
+            <StackPanel IsVisible="{Binding IsJsonOpen}">
+              <Rectangle Classes="sep" />
+              <SelectableTextBlock Classes="caption mono" Text="{Binding Json}" TextWrapping="Wrap" Margin="16,12" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+        <TextBlock Classes="footer" Text="Здесь есть ключи доступа к серверу. Не публикуйте их." IsVisible="{Binding IsJsonOpen}" />
+
+        <Border Classes="group" Margin="16,24,16,0" IsVisible="{Binding CanDelete}">
+          <Button Classes="plain row danger" Command="{Binding Delete}" HorizontalContentAlignment="Center">
+            <TextBlock Classes="body" Text="Удалить сервер" />
+          </Button>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </Panel>
+</UserControl>

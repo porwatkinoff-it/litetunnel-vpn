@@ -1,0 +1,199 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:LiteTunnel.App.ViewModels"
+             xmlns:c="using:LiteTunnel.App.Controls"
+             x:Class="LiteTunnel.App.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+  <UserControl.Styles>
+    <Style Selector="Grid.row > TextBox">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="12,0" />
+    </Style>
+    <Style Selector="Grid.row > TextBox.trailing">
+      <Setter Property="Margin" Value="12,0,0,0" />
+      <Setter Property="TextAlignment" Value="Right" />
+    </Style>
+  </UserControl.Styles>
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel MaxWidth="640" Margin="0,0,0,32">
+
+      <!-- Маршрутизация -->
+      <TextBlock Classes="header" Text="Маршрутизация" Margin="32,12,32,6" />
+      <Border Classes="group">
+        <StackPanel>
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Режим" />
+            <ComboBox Grid.Column="1" ItemsSource="{Binding Routing.Items}" SelectedIndex="{Binding Routing.Index}" AutomationProperties.Name="Режим" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Блокировать рекламу" />
+            <ToggleSwitch Grid.Column="1" IsChecked="{Binding BlockAds}" AutomationProperties.Name="Блокировать рекламу" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Button Classes="plain row" Command="{Binding OpenDomainRules}">
+            <DockPanel>
+              <c:Icon DockPanel.Dock="Right" Classes="chevron folded" Data="{StaticResource Icon.expand_more}" Size="18" VerticalAlignment="Center" />
+              <TextBlock DockPanel.Dock="Right" Classes="body secondary" Text="{Binding DomainRulesCount}" Margin="0,0,6,0" VerticalAlignment="Center" />
+              <TextBlock Classes="body" Text="Свои правила для доменов" VerticalAlignment="Center" />
+            </DockPanel>
+          </Button>
+          <Rectangle Classes="sep" IsVisible="{Binding ShowRuleSets}" />
+          <Button Classes="plain row accent" Command="{Binding UpdateRuleSets}" IsVisible="{Binding ShowRuleSets}">
+            <DockPanel>
+              <Path DockPanel.Dock="Right" Classes="spinner" IsVisible="{Binding IsUpdatingRuleSets}" VerticalAlignment="Center" />
+              <TextBlock DockPanel.Dock="Right" Classes="body busy" Text="не скачаны" IsVisible="{Binding RuleSetsMissing}" VerticalAlignment="Center" />
+              <TextBlock Classes="body" Text="Обновить базы" VerticalAlignment="Center" />
+            </DockPanel>
+          </Button>
+        </StackPanel>
+      </Border>
+      <TextBlock Classes="footer" Text="«Россия напрямую»: российские сайты и адреса идут мимо VPN. Базы доменов и адресов скачиваются раз в неделю." />
+
+      <!-- DNS -->
+      <TextBlock Classes="header" Text="DNS" />
+      <Border Classes="group">
+        <StackPanel>
+          <Grid Classes="row" ColumnDefinitions="Auto,*,Auto">
+            <TextBlock Classes="body" Text="Через VPN" />
+            <TextBox Grid.Column="1" Text="{Binding RemoteAddress}" Watermark="Адрес" AutomationProperties.Name="DNS через VPN" />
+            <ComboBox Grid.Column="2" MinWidth="96" ItemsSource="{Binding RemoteKind.Items}" SelectedIndex="{Binding RemoteKind.Index}" AutomationProperties.Name="Тип DNS через VPN" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="Auto,*,Auto">
+            <TextBlock Classes="body" Text="Напрямую" />
+            <TextBox Grid.Column="1" Text="{Binding DirectAddress}" Watermark="Адрес" AutomationProperties.Name="DNS напрямую" />
+            <ComboBox Grid.Column="2" MinWidth="96" ItemsSource="{Binding DirectKind.Items}" SelectedIndex="{Binding DirectKind.Index}" AutomationProperties.Name="Тип DNS напрямую" />
+          </Grid>
+        </StackPanel>
+      </Border>
+      <TextBlock Classes="footer" Text="UDP — адрес вроде 77.88.8.8; DoT и DoH — адрес или имя сервера, например 1.1.1.1 или dns.google." />
+
+      <!-- Подключение -->
+      <TextBlock Classes="header" Text="Подключение" />
+      <Border Classes="group">
+        <StackPanel>
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Способ" />
+            <ComboBox Grid.Column="1" ItemsSource="{Binding Mode.Items}" SelectedIndex="{Binding Mode.Index}" AutomationProperties.Name="Способ подключения" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto" IsVisible="{Binding IsTun}">
+            <TextBlock Classes="body" Text="Kill switch" />
+            <ToggleSwitch Grid.Column="1" IsChecked="{Binding KillSwitch}" AutomationProperties.Name="Kill switch" />
+          </Grid>
+          <Rectangle Classes="sep" IsVisible="{Binding IsTun}" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Локальная сеть мимо VPN" IsVisible="{Binding IsTun}" />
+            <TextBlock Classes="body" Text="Локальная сеть мимо прокси" IsVisible="{Binding IsProxy}" />
+            <ToggleSwitch Grid.Column="1" IsChecked="{Binding ExcludeLocal}" AutomationProperties.Name="Локальная сеть мимо VPN" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="IPv6" />
+            <ToggleSwitch Grid.Column="1" IsChecked="{Binding Ipv6}" AutomationProperties.Name="IPv6" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Фрагментация TLS" />
+            <ToggleSwitch Grid.Column="1" IsChecked="{Binding TlsFragment}" AutomationProperties.Name="Фрагментация TLS" />
+          </Grid>
+        </StackPanel>
+      </Border>
+      <TextBlock Classes="footer" Text="{Binding ConnectionFooter}" />
+      <StackPanel IsVisible="{Binding HasSetcapHint}" Margin="32,8,32,0" Spacing="4">
+        <TextBlock Classes="footer" Margin="0" Text="Чтобы не вводить пароль при каждом подключении, один раз выполните в терминале:" />
+        <SelectableTextBlock Classes="caption mono" Text="{Binding SetcapHint}" TextWrapping="Wrap" />
+      </StackPanel>
+
+      <!-- Список серверов -->
+      <TextBlock Classes="header" Text="Список серверов" />
+      <Border Classes="group">
+        <Grid Classes="row" ColumnDefinitions="*,Auto">
+          <TextBlock Classes="body" Text="Сортировка" />
+          <ComboBox Grid.Column="1" ItemsSource="{Binding Sort.Items}" SelectedIndex="{Binding Sort.Index}" AutomationProperties.Name="Сортировка" />
+        </Grid>
+      </Border>
+
+      <!-- Пинг -->
+      <TextBlock Classes="header" Text="Пинг" />
+      <Border Classes="group">
+        <StackPanel>
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Способ" />
+            <ComboBox Grid.Column="1" ItemsSource="{Binding PingMethod.Items}" SelectedIndex="{Binding PingMethod.Index}" AutomationProperties.Name="Способ пинга" />
+          </Grid>
+          <Rectangle Classes="sep" IsVisible="{Binding ShowPingUrl}" />
+          <Grid Classes="row" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowPingUrl}">
+            <TextBlock Classes="body" Text="Адрес проверки" />
+            <TextBox Grid.Column="1" Classes="trailing" Text="{Binding PingUrl}" Watermark="{Binding PingUrlPlaceholder}" AutomationProperties.Name="Адрес проверки" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Вид" />
+            <ComboBox Grid.Column="1" ItemsSource="{Binding PingView.Items}" SelectedIndex="{Binding PingView.Index}" AutomationProperties.Name="Вид пинга" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Пинг при открытии" />
+            <ToggleSwitch Grid.Column="1" IsChecked="{Binding PingOnOpen}" AutomationProperties.Name="Пинг при открытии" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Пинг после обновления подписки" TextWrapping="Wrap" />
+            <ToggleSwitch Grid.Column="1" IsChecked="{Binding PingOnUpdate}" AutomationProperties.Name="Пинг после обновления подписки" />
+          </Grid>
+        </StackPanel>
+      </Border>
+      <TextBlock Classes="footer" Text="{Binding PingFooter}" />
+
+      <!-- Дополнительно -->
+      <TextBlock Classes="header" Text="Дополнительно" />
+      <Border Classes="group">
+        <StackPanel>
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Определять сайт (sniffing)" />
+            <ToggleSwitch Grid.Column="1" IsChecked="{Binding Sniffing}" AutomationProperties.Name="Определять сайт" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Сетевой стек" />
+            <ComboBox Grid.Column="1" ItemsSource="{Binding Stack.Items}" SelectedIndex="{Binding Stack.Index}" AutomationProperties.Name="Сетевой стек" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="MTU" />
+            <TextBox Grid.Column="1" Classes="trailing" Width="120" Text="{Binding Mtu}" Watermark="авто" AutomationProperties.Name="MTU" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Журнал" />
+            <ComboBox Grid.Column="1" ItemsSource="{Binding Log.Items}" SelectedIndex="{Binding Log.Index}" AutomationProperties.Name="Уровень журнала" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Button Classes="plain row" Command="{Binding OpenLogs}">
+            <DockPanel>
+              <c:Icon DockPanel.Dock="Right" Classes="chevron folded" Data="{StaticResource Icon.expand_more}" Size="18" VerticalAlignment="Center" />
+              <TextBlock Classes="body" Text="Открыть журнал" VerticalAlignment="Center" />
+            </DockPanel>
+          </Button>
+        </StackPanel>
+      </Border>
+
+      <!-- О приложении -->
+      <TextBlock Classes="header" Text="О приложении" />
+      <Border Classes="group">
+        <StackPanel>
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Версия" />
+            <TextBlock Grid.Column="1" Classes="body secondary" Text="{Binding Version}" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Button Classes="plain row accent" Command="{Binding OpenCoreSite}">
+            <TextBlock Classes="body" Text="Ядро sing-box (GPLv3)" VerticalAlignment="Center" />
+          </Button>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

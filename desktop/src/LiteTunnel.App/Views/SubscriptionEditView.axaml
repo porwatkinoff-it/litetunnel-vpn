@@ -1,0 +1,108 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:LiteTunnel.App.ViewModels"
+             xmlns:v="using:LiteTunnel.App.Views"
+             x:Class="LiteTunnel.App.Views.SubscriptionEditView"
+             x:DataType="vm:SubscriptionEditViewModel">
+  <UserControl.Styles>
+    <Style Selector="Grid.row > TextBox, Grid.row > NumericUpDown">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Margin" Value="12,0,0,0" />
+    </Style>
+  </UserControl.Styles>
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel MaxWidth="640" Margin="0,0,0,32">
+
+      <TextBlock Classes="header" Text="Подписка" Margin="32,12,32,6" />
+      <Border Classes="group">
+        <StackPanel>
+          <Grid Classes="row" ColumnDefinitions="110,*">
+            <TextBlock Classes="body" Text="Название" />
+            <TextBox Grid.Column="1" Text="{Binding Name}" AutomationProperties.Name="Название" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="110,*">
+            <TextBlock Classes="body" Text="Адрес" />
+            <TextBox Grid.Column="1" Classes="mono" FontSize="12" Text="{Binding Url}" Watermark="https://…" AutomationProperties.Name="Адрес подписки" />
+          </Grid>
+        </StackPanel>
+      </Border>
+      <TextBlock Classes="footer danger" Text="Нужен адрес http:// или https://" IsVisible="{Binding ShowUrlError}" />
+
+      <TextBlock Classes="header" Text="Обновление" />
+      <Border Classes="group">
+        <StackPanel>
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Обновлять каждые, ч" />
+            <NumericUpDown Grid.Column="1" Value="{Binding Interval}"
+                           Minimum="1" Maximum="168" Increment="1" FormatString="0"
+                           MinWidth="120" AutomationProperties.Name="Интервал обновления в часах" />
+          </Grid>
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="110,*">
+            <TextBlock Classes="body" Text="User-Agent" />
+            <TextBox Grid.Column="1" Classes="mono" FontSize="12" Text="{Binding UserAgent}" Watermark="{Binding UserAgentPlaceholder}" AutomationProperties.Name="User-Agent" />
+          </Grid>
+        </StackPanel>
+      </Border>
+      <TextBlock Classes="footer" Text="Обновляется при открытии приложения, если срок подошёл. Некоторые провайдеры отдают разные списки разным клиентам: тогда поможет другой User-Agent." />
+
+      <TextBlock Classes="header" Text="Состояние" />
+      <Border Classes="group">
+        <StackPanel>
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Серверов" />
+            <TextBlock Grid.Column="1" Classes="body secondary tabular" Text="{Binding ServerCount}" />
+          </Grid>
+          <Rectangle Classes="sep" IsVisible="{Binding HasSkipped}" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto" IsVisible="{Binding HasSkipped}">
+            <TextBlock Classes="body" Text="Пропущено строк" />
+            <TextBlock Grid.Column="1" Classes="body busy tabular" Text="{Binding Skipped}" />
+          </Grid>
+          <TextBlock Classes="caption secondary" Text="{Binding SkippedReasons}" IsVisible="{Binding HasSkippedReasons}"
+                     TextWrapping="Wrap" Margin="16,0,16,12" />
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="*,Auto">
+            <TextBlock Classes="body" Text="Обновлена" />
+            <TextBlock Grid.Column="1" Classes="body secondary" Text="{Binding Updated}" />
+          </Grid>
+          <StackPanel IsVisible="{Binding HasUsage}">
+            <Rectangle Classes="sep" />
+            <Panel Margin="16,12">
+              <v:UsageView DataContext="{Binding Usage}" />
+            </Panel>
+          </StackPanel>
+          <StackPanel IsVisible="{Binding HasError}">
+            <Rectangle Classes="sep" />
+            <SelectableTextBlock Classes="caption danger" Text="{Binding Error}" TextWrapping="Wrap" Margin="16,12" />
+          </StackPanel>
+          <StackPanel IsVisible="{Binding HasSupport}">
+            <Rectangle Classes="sep" />
+            <Button Classes="plain row accent" Command="{Binding OpenSupport}">
+              <TextBlock Classes="body" Text="Поддержка провайдера" />
+            </Button>
+          </StackPanel>
+          <StackPanel IsVisible="{Binding HasSite}">
+            <Rectangle Classes="sep" />
+            <Button Classes="plain row accent" Command="{Binding OpenSite}">
+              <TextBlock Classes="body" Text="Личный кабинет" />
+            </Button>
+          </StackPanel>
+          <Rectangle Classes="sep" />
+          <Button Classes="plain row accent" Command="{Binding RefreshNow}">
+            <DockPanel>
+              <Path DockPanel.Dock="Right" Classes="spinner" IsVisible="{Binding IsRefreshing}" VerticalAlignment="Center" />
+              <TextBlock Classes="body" Text="Обновить сейчас" VerticalAlignment="Center" />
+            </DockPanel>
+          </Button>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="group" Margin="16,24,16,0">
+        <Button Classes="plain row danger" Command="{Binding Delete}" HorizontalContentAlignment="Center">
+          <TextBlock Classes="body" Text="Удалить подписку" />
+        </Button>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>
