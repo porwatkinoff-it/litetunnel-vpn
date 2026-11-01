@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A tunnel arch with a road into it, inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M30,76L30,52A24,24 0,0 1,78 52L78,76L68,76L68,52A14,14 0,0 0,40 52L40,76Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M51,58h6v6h-6zM51,68h6v8h-6z" />
+</vector>
