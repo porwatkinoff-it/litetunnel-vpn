@@ -24,6 +24,12 @@
   <Style Selector="TextBlock.caption, SelectableTextBlock.caption">
     <Setter Property="FontSize" Value="12" />
   </Style>
+  <Style Selector="TextBlock.rowTitle">
+    <Setter Property="FontSize" Value="13" />
+  </Style>
+  <Style Selector="TextBlock.rowDetail">
+    <Setter Property="FontSize" Value="11" />
+  </Style>
   <Style Selector="TextBlock.footer">
     <Setter Property="FontSize" Value="12" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />

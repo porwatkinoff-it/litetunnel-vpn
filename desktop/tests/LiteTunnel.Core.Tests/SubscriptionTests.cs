@@ -174,7 +174,7 @@ public class SubscriptionTests
 
         var server = new Server(null, result.Servers[0]);
         Assert.Equal(["a.example.com", "b.example.com"], server.Members.Select(m => m.Host));
-        Assert.Equal("Авто-выбор из 2", server.Detail);
+        Assert.Equal("Самый быстрый из 2", server.Detail);
 
         var config = ConfigBuilder.Build(server, new AppSettings(), null);
         var outbounds = config["outbounds"]?.AsArray ?? [];
@@ -199,8 +199,8 @@ public class SubscriptionTests
         state = state with { Subscriptions = [.. state.Subscriptions, sub] };
 
         state = state.Apply(Parse(string.Join("\n", Lines)), sub.Id);
-        Assert.Equal(["Manual", "NL", "DE"], state.Servers.Select(s => s.Name));
-        var de = state.Servers[2];
+        Assert.Equal(["Manual", "Авто-выбор", "NL", "DE"], state.Servers.Select(s => s.Name));
+        var de = state.Servers[3];
         state = state with { SelectedServerId = de.Id };
         state = state.UpdateServer(de.Id, s => s with { LastPing = PingResult.Ms(42) });
 
@@ -209,9 +209,9 @@ public class SubscriptionTests
             "hysteria2://pw@de.example.com:443?sni=de.example.com#DE",
             "vless://id-3@us.example.com:443?security=tls#US"), new() { ["profile-title"] = "Renamed" });
         state = state.Apply(second, sub.Id);
-        Assert.Equal(["Manual", "DE", "US"], state.Servers.Select(s => s.Name));
-        Assert.Equal(de.Id, state.Servers[1].Id);
-        Assert.Equal(PingResult.Ms(42), state.Servers[1].LastPing);
+        Assert.Equal(["Manual", "Авто-выбор", "DE", "US"], state.Servers.Select(s => s.Name));
+        Assert.Equal(de.Id, state.Servers[2].Id);
+        Assert.Equal(PingResult.Ms(42), state.Servers[2].LastPing);
         Assert.Equal(de.Id, state.SelectedServerId);
         Assert.Equal("Renamed", state.Subscriptions[0].Name);
 
@@ -222,6 +222,149 @@ public class SubscriptionTests
         state = state.RemoveSubscription(sub.Id);
         Assert.Equal(["Manual"], state.Servers.Select(s => s.Name));
         Assert.Equal("Manual", state.SelectedServer?.Name);
+    }
+
+    private static List<ParsedServer> Named(params string[] names) =>
+        names.Select(x => ShareLink.Parse($"trojan://pw@{x}.example.com:443#{x}")).ToList();
+
+    private static SubscriptionResult Result(IEnumerable<ParsedServer> servers)
+    {
+        var result = new SubscriptionResult();
+        result.Servers.AddRange(servers);
+        return result;
+    }
+
+    private static (AppState State, Guid Id) Subscribed(IEnumerable<ParsedServer> servers, AppState? state = null)
+    {
+        state ??= new AppState();
+        var sub = new Subscription { Name = "sub", Url = "https://s.example.com/x" };
+        return ((state with { Subscriptions = [.. state.Subscriptions, sub] }).Apply(Result(servers), sub.Id), sub.Id);
+    }
+
+    [Fact]
+    public void EverySubscriptionGetsAnAutoRow()
+    {
+        var (state, id) = Subscribed(Named("a", "b"));
+        Assert.Equal(["Авто-выбор", "a", "b"], state.Servers.Select(s => s.Name));
+
+        // A new subscription starts on it, and it lists the servers by name.
+        var auto = state.Servers[0];
+        Assert.True(auto.IsAuto);
+        Assert.Equal(auto.Id, state.SelectedServerId);
+        Assert.Null(auto.ShareLink);
+        Assert.Equal("Самый быстрый из 2", auto.Subtitle);
+        Assert.Equal(["a", "b"], auto.Members.Select(m => m.Name));
+        Assert.Equal(2, state.ServerCount(id));
+
+        // A refresh keeps the row and adds the new server to it.
+        state = state.UpdateServer(auto.Id, s => s with { LastPing = PingResult.Ms(30) });
+        state = state.Apply(Result(Named("a", "b", "c")), id);
+        Assert.Equal(auto.Id, state.Servers[0].Id);
+        Assert.Equal(PingResult.Ms(30), state.Servers[0].LastPing);
+        Assert.Equal(["a", "b", "c"], state.Servers[0].Members.Select(m => m.Name));
+        Assert.Equal(auto.Id, state.SelectedServerId);
+
+        // With one server left there is nothing to choose from.
+        state = state.Apply(Result(Named("c")), id);
+        Assert.Equal(["c"], state.Servers.Select(s => s.Name));
+        Assert.Equal("c", state.SelectedServer?.Name);
+    }
+
+    [Fact]
+    public void AutoRowRunsAsAPlainGroup()
+    {
+        var (state, _) = Subscribed(Named("a", "b"));
+        var outbounds = ConfigBuilder.Build(state.Servers[0], new AppSettings(), null)["outbounds"]?.AsArray ?? [];
+        Assert.Equal(["proxy", "proxy-1", "proxy-2", "direct"], outbounds.Select(o => o["tag"]?.AsString).OfType<string>());
+        Assert.Equal("urltest", outbounds[0]["type"]?.AsString);
+        Assert.Equal("10m", outbounds[0]["interval"]?.AsString);
+        Assert.Null(outbounds[0]["auto"]);
+    }
+
+    [Fact]
+    public void ProviderGroupCoveringEverythingIsEnough()
+    {
+        var singles = Named("a", "b");
+        var (state, id) = Subscribed([ServerGroup.Make(singles, "Группа"), .. singles]);
+        Assert.Equal(["Группа", "a", "b"], state.Servers.Select(s => s.Name));
+        Assert.Equal(2, state.ServerCount(id));
+
+        // The same with nothing but the group in the subscription.
+        var (only, onlyId) = Subscribed([ServerGroup.Make(singles, "Группа")]);
+        Assert.Equal(["Группа"], only.Servers.Select(s => s.Name));
+        Assert.Equal(2, only.ServerCount(onlyId));
+    }
+
+    [Fact]
+    public void ProviderGroupOverSomeServersGetsAnAutoRowOverAll()
+    {
+        var (state, id) = Subscribed([ServerGroup.Make(Named("a", "b"), "Группа"), .. Named("a", "c")]);
+        Assert.Equal(["Авто-выбор", "Группа", "a", "c"], state.Servers.Select(s => s.Name));
+        Assert.Equal(["a", "c", "b.example.com:443"], state.Servers[0].Members.Select(m => m.Name));
+        Assert.Equal(3, state.ServerCount(id));
+    }
+
+    [Fact]
+    public void SyncAddsAutoRowToOlderStateOnce()
+    {
+        var sub = new Subscription { Name = "sub", Url = "https://s.example.com/x" };
+        var rows = Named("a", "b").Select(p => new Server(sub.Id, p)).ToList();
+        var older = new AppState { Subscriptions = [sub], Servers = rows, SelectedServerId = rows[1].Id };
+
+        var state = older.SyncAutoGroups();
+        Assert.Equal(["Авто-выбор", "a", "b"], state.Servers.Select(s => s.Name));
+        Assert.Equal("b", state.SelectedServer?.Name);
+
+        Assert.Same(state, state.SyncAutoGroups());
+    }
+
+    [Fact]
+    public void SortKeepsGroupsOnTop()
+    {
+        var (start, _) = Subscribed(Named("b", "a"));
+        PingResult[] pings = [PingResult.Ms(10), PingResult.Ms(90), PingResult.Ms(10)];
+        var state = start with { Servers = start.Servers.Select((s, i) => s with { LastPing = pings[i] }).ToList() };
+        var byName = state with { Settings = state.Settings with { SortMode = SortMode.Name } };
+        Assert.Equal(["Авто-выбор", "a", "b"], byName.Sorted(byName.Servers).Select(s => s.Name));
+        var byPing = state with { Settings = state.Settings with { SortMode = SortMode.Ping } };
+        Assert.Equal(["Авто-выбор", "a", "b"], byPing.Sorted(byPing.Servers).Select(s => s.Name));
+    }
+
+    [Fact]
+    public void GroupIsPingedThroughItsRows()
+    {
+        var (state, id) = Subscribed(Named("a", "b"));
+        Server auto = state.Servers[0], a = state.Servers[1], b = state.Servers[2];
+
+        // Each server once, whatever is asked for.
+        Assert.Equal([a.Id, b.Id], state.PingTargets([auto]).Select(s => s.Id));
+        Assert.Equal([a.Id, b.Id], state.PingTargets(state.ServersOf(id)).Select(s => s.Id));
+        Assert.Equal([b.Id], state.PingTargets([b]).Select(s => s.Id));
+
+        // The group shows its fastest as results come in.
+        state = state.SettingPing(PingResult.Ms(80), a.Id);
+        Assert.Equal(PingResult.Ms(80), state.Servers[0].LastPing);
+        state = state.SettingPing(PingResult.Ms(20), b.Id);
+        Assert.Equal(PingResult.Ms(20), state.Servers[0].LastPing);
+        state = state.SettingPing(PingResult.Failed, b.Id);
+        Assert.Equal(PingResult.Ms(80), state.Servers[0].LastPing);
+        state = state.SettingPing(PingResult.Failed, a.Id);
+        Assert.Equal(PingResult.Failed, state.Servers[0].LastPing);
+    }
+
+    [Fact]
+    public void GroupWithoutItsRowsIsPingedItself()
+    {
+        var group = ServerGroup.Make(Named("a", "b"), "Группа");
+        var (state, _) = Subscribed([group]);
+        var row = state.Servers[0];
+        Assert.Equal([row.Id], state.PingTargets([row]).Select(s => s.Id));
+        state = state.SettingPing(PingResult.Ms(50), row.Id);
+        Assert.Equal(PingResult.Ms(50), state.Servers[0].LastPing);
+
+        // Servers added by hand are never treated as a group's rows.
+        var manual = new AppState().AddManual([group, .. Named("a", "b")]).State;
+        Assert.Equal([manual.Servers[0].Id], manual.PingTargets([manual.Servers[0]]).Select(s => s.Id));
     }
 
     [Fact]

@@ -23,11 +23,11 @@
         <TextBlock Classes="header" Text="Сервер" />
         <Border Classes="group">
           <StackPanel>
-            <Grid Classes="row" ColumnDefinitions="Auto,*">
-              <TextBlock Classes="body" Text="Протокол" />
-              <TextBlock Grid.Column="1" Classes="body secondary" Text="{Binding Protocol}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" Margin="12,0,0,0" />
-            </Grid>
             <StackPanel IsVisible="{Binding IsSingle}">
+              <Grid Classes="row" ColumnDefinitions="Auto,*">
+                <TextBlock Classes="body" Text="Протокол" />
+                <TextBlock Grid.Column="1" Classes="body secondary" Text="{Binding Protocol}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" Margin="12,0,0,0" />
+              </Grid>
               <Rectangle Classes="sep" />
               <Grid Classes="row" ColumnDefinitions="Auto,*">
                 <TextBlock Classes="body" Text="Адрес" />
@@ -39,8 +39,8 @@
                 <TextBlock Classes="body" Text="Транспорт" />
                 <TextBlock Grid.Column="1" Classes="body secondary" Text="{Binding Transport}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" Margin="12,0,0,0" />
               </Grid>
+              <Rectangle Classes="sep" />
             </StackPanel>
-            <Rectangle Classes="sep" />
             <Grid Classes="row" ColumnDefinitions="*,Auto">
               <TextBlock Classes="body" Text="Пинг" />
               <TextBlock Grid.Column="1" Classes="body tabular"

@@ -122,7 +122,7 @@ public sealed class ServerDetailViewModel : PageViewModel
 
     private void Refresh()
     {
-        members = Server?.Members.Select(m => new MemberRow(m.Name, string.Join(" · ", new[] { m.Proto.Title(), m.Detail }.Where(p => p.Length > 0)))).ToList() ?? [];
+        members = Server?.Members.Select(m => new MemberRow(m.Name, m.Subtitle)).ToList() ?? [];
         RaiseAll();
         Select.Refresh();
         PingThis.Refresh();

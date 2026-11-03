@@ -58,12 +58,22 @@ public sealed record Server(
 
     public string MatchKey => $"{Proto.Raw()}|{Host}|{Port}|{Name}";
 
+    public bool IsGroup => ServerGroup.Members(Outbound) is not null;
+
+    /// <summary>The row the app adds to a subscription, as opposed to a provider's group.</summary>
+    public bool IsAuto => Outbound[ServerGroup.AutoKey]?.AsBool == true;
+
+    /// <summary>The line under the name: "Протокол · транспорт", for a group its size.</summary>
+    public string Subtitle => IsGroup
+        ? Detail
+        : string.Join(" · ", new[] { Proto.Title(), Detail }.Where(s => s.Length > 0));
+
     /// <summary>Transport and security in one short label, e.g. "Reality · Vision".</summary>
     public string Detail
     {
         get
         {
-            if (ServerGroup.Members(Outbound) is { } members) return $"Авто-выбор из {members.Count}";
+            if (ServerGroup.Members(Outbound) is { } members) return $"Самый быстрый из {members.Count}";
             var parts = new List<string>();
             var tls = Outbound["tls"];
             if (tls is not null && tls["enabled"]?.AsBool == true)
@@ -87,7 +97,7 @@ public sealed record Server(
                 if (ProxyProtocols.Of(member["type"]?.AsString) is not { } proto) continue;
                 if (member["server"]?.AsString is not { } host) continue;
                 if (member["server_port"]?.AsInt is not { } port) continue;
-                list.Add(new Server(SubscriptionId, new ParsedServer($"{host}:{port}", proto, host, port, member, null)));
+                list.Add(new Server(SubscriptionId, new ParsedServer(member["tag"]?.AsString ?? $"{host}:{port}", proto, host, port, member, null)));
             }
             return list;
         }
@@ -327,23 +337,19 @@ public sealed record AppState
         var subs = Subscriptions.ToList();
         subs[index] = sub;
 
+        var previousRows = ServersOf(subscriptionId);
         var oldByKey = new Dictionary<string, Server>();
-        foreach (var server in Servers)
-            if (server.SubscriptionId == subscriptionId) oldByKey.TryAdd(server.MatchKey, server);
-        var fresh = result.Servers.Select(parsed =>
+        foreach (var server in previousRows)
+            if (!server.IsAuto) oldByKey.TryAdd(server.MatchKey, server);
+        var rows = result.Servers.Select(parsed =>
         {
             var server = new Server(subscriptionId, parsed);
             return oldByKey.Remove(parsed.MatchKey, out var previous)
                 ? server with { Id = previous.Id, LastPing = previous.LastPing }
                 : server;
         }).ToList();
-
-        // Keep the subscription's block where it was in the list.
-        int found = Servers.ToList().FindIndex(s => s.SubscriptionId == subscriptionId);
-        int insertAt = found >= 0 ? found : Servers.Count;
-        var before = Servers.Take(insertAt).Where(s => s.SubscriptionId != subscriptionId);
-        var after = Servers.Skip(insertAt).Where(s => s.SubscriptionId != subscriptionId);
-        var list = before.Concat(fresh).Concat(after).ToList();
+        var fresh = WithAutoRow(rows, subscriptionId, previousRows);
+        var list = ReplacingServers(subscriptionId, fresh);
 
         var selected = SelectedServerId;
         if (selected is not null && list.All(s => s.Id != selected))
@@ -353,6 +359,88 @@ public sealed record AppState
         }
         selected ??= fresh.FirstOrDefault()?.Id;
         return this with { Subscriptions = subs, Servers = list, SelectedServerId = selected };
+    }
+
+    private static List<Server> WithAutoRow(IReadOnlyList<Server> rows, Guid subscriptionId, IReadOnlyList<Server> previous)
+    {
+        if (ServerGroup.Auto(rows) is not { } auto) return rows.ToList();
+        var old = previous.FirstOrDefault(s => s.IsAuto);
+        var row = new Server(subscriptionId, auto, old?.Id) { LastPing = old?.LastPing };
+        return [row, .. rows];
+    }
+
+    /// <summary>Keeps the subscription's block where it was in the list.</summary>
+    private List<Server> ReplacingServers(Guid subscriptionId, IReadOnlyList<Server> fresh)
+    {
+        int found = Servers.ToList().FindIndex(s => s.SubscriptionId == subscriptionId);
+        int insertAt = found >= 0 ? found : Servers.Count;
+        var before = Servers.Take(insertAt).Where(s => s.SubscriptionId != subscriptionId);
+        var after = Servers.Skip(insertAt).Where(s => s.SubscriptionId != subscriptionId);
+        return before.Concat(fresh).Concat(after).ToList();
+    }
+
+    /// <summary>
+    /// Gives subscriptions saved before auto rows existed their row, and drops
+    /// or rebuilds one that no longer matches. The same state when nothing changed.
+    /// </summary>
+    public AppState SyncAutoGroups()
+    {
+        var next = this;
+        foreach (var sub in Subscriptions)
+        {
+            var old = next.ServersOf(sub.Id);
+            if (old.Count == 0) continue;
+            var fresh = WithAutoRow(old.Where(s => !s.IsAuto).ToList(), sub.Id, old);
+            next = next with { Servers = next.ReplacingServers(sub.Id, fresh) };
+        }
+        if (next.SelectedServerId is { } selected && next.Servers.All(s => s.Id != selected))
+            next = next with { SelectedServerId = next.Servers.FirstOrDefault()?.Id };
+        return next.Servers.SequenceEqual(Servers) && next.SelectedServerId == SelectedServerId ? this : next;
+    }
+
+    /// <summary>How many different servers a subscription holds, however many rows repeat them.</summary>
+    public int ServerCount(Guid? subscriptionId) => ServerGroup.UniqueMembers(ServersOf(subscriptionId)).Count;
+
+    /// <summary>The subscription's rows that make up a group, or null when not all of them are listed.</summary>
+    private List<Server>? MemberRows(Server group)
+    {
+        if (group.SubscriptionId is null || ServerGroup.Members(group.Outbound) is not { } members) return null;
+        var byKey = new Dictionary<Json, Server>();
+        foreach (var row in ServersOf(group.SubscriptionId))
+            if (!row.IsGroup) byKey.TryAdd(ServerGroup.Key(row.Outbound), row);
+        var rows = new List<Server>();
+        foreach (var member in members)
+            if (byKey.TryGetValue(ServerGroup.Key(member), out var row)) rows.Add(row);
+        return rows.Count == members.Count ? rows : null;
+    }
+
+    /// <summary>
+    /// What to measure for these rows, each server once. A group that repeats
+    /// its subscription's rows is measured through them.
+    /// </summary>
+    public IReadOnlyList<Server> PingTargets(IEnumerable<Server> list)
+    {
+        var seen = new HashSet<Guid>();
+        var result = new List<Server>();
+        foreach (var server in list)
+            foreach (var target in (IEnumerable<Server>?)MemberRows(server) ?? [server])
+                if (seen.Add(target.Id)) result.Add(target);
+        return result;
+    }
+
+    /// <summary>Records a result, and the fastest on the groups the row belongs to.</summary>
+    public AppState SettingPing(PingResult? result, Guid id)
+    {
+        var next = UpdateServer(id, s => s with { LastPing = result });
+        if (next.Servers.FirstOrDefault(s => s.Id == id) is not { } row) return this;
+        if (row.IsGroup || row.SubscriptionId is null) return next;
+        foreach (var group in next.ServersOf(row.SubscriptionId).Where(s => s.IsGroup))
+        {
+            if (next.MemberRows(group) is not { } rows || rows.All(r => r.Id != id)) continue;
+            var fastest = Ping.Fastest(rows.Select(r => r.LastPing));
+            next = next.UpdateServer(group.Id, s => s with { LastPing = fastest });
+        }
+        return next;
     }
 
     public AppState RemoveSubscription(Guid id)
@@ -380,13 +468,17 @@ public sealed record AppState
     public AppState UpdateSubscription(Guid id, Func<Subscription, Subscription> change) =>
         this with { Subscriptions = Subscriptions.Select(s => s.Id == id ? change(s) : s).ToList() };
 
-    public IReadOnlyList<Server> Sorted(IEnumerable<Server> list) => Settings.SortMode switch
+    public IReadOnlyList<Server> Sorted(IEnumerable<Server> list)
     {
-        SortMode.Name => list.OrderBy(s => s.Name, NaturalOrder.Instance).ToList(),
-        // OrderBy is stable: servers without a result keep their order at the end.
-        SortMode.Ping => list.OrderBy(s => s.LastPing?.SortValue ?? int.MaxValue).ToList(),
-        _ => list.ToList(),
-    };
+        if (Settings.SortMode == SortMode.None) return list.ToList();
+        // Groups stay on top in any order: they are not one more server to compare.
+        var groups = list.Where(s => s.IsGroup);
+        var rest = list.Where(s => !s.IsGroup);
+        return groups.Concat(Settings.SortMode == SortMode.Name
+            ? rest.OrderBy(s => s.Name, NaturalOrder.Instance)
+            // OrderBy is stable: servers without a result keep their order at the end.
+            : rest.OrderBy(s => s.LastPing?.SortValue ?? int.MaxValue)).ToList();
+    }
 }
 
 /// <summary>

@@ -64,6 +64,8 @@ object LiteType {
     val callout = TextStyle(fontSize = 15.sp, lineHeight = 20.sp)
     val caption = TextStyle(fontSize = 12.sp, lineHeight = 16.sp)
     val footer = TextStyle(fontSize = 12.sp, lineHeight = 16.sp)
+    val rowTitle = TextStyle(fontSize = 14.sp, lineHeight = 18.sp)
+    val rowDetail = TextStyle(fontSize = 11.sp, lineHeight = 14.sp)
 }
 
 /** Digits of equal width, for numbers that change in place. */

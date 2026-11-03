@@ -33,8 +33,8 @@ struct ServerDetailView: View {
             }
 
             Section {
-                LabeledContent("Протокол", value: server.proto.title)
                 if server.members.isEmpty {
+                    LabeledContent("Протокол", value: server.proto.title)
                     LabeledContent("Адрес", value: "\(server.host):\(server.port)")
                     if !server.detail.isEmpty {
                         LabeledContent("Транспорт", value: server.detail)
@@ -57,10 +57,13 @@ struct ServerDetailView: View {
             if !members.isEmpty {
                 Section {
                     ForEach(Array(members.enumerated()), id: \.offset) { _, member in
-                        LabeledContent {
-                            Text("\(member.host):\(member.port)")
-                        } label: {
-                            Text([member.proto.title, member.detail].filter { !$0.isEmpty }.joined(separator: " · "))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(member.name)
+                                .lineLimit(1)
+                            Text(member.subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
                     }
                 } header: {

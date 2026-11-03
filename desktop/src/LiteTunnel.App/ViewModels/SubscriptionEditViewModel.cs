@@ -96,7 +96,7 @@ public sealed class SubscriptionEditViewModel : PageViewModel
 
     // MARK: state
 
-    public int ServerCount => Model.State.ServersOf(id).Count;
+    public int ServerCount => Model.State.ServerCount(id);
 
     public int Skipped => Subscription?.SkippedCount ?? 0;
 

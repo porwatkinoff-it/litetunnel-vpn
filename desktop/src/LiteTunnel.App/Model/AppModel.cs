@@ -28,10 +28,12 @@ public sealed class AppModel : Observable
         Store = store;
         try { store.PrepareDirectories(); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-        State = store.LoadState();
+        var loaded = store.LoadState();
+        State = loaded.SyncAutoGroups();
         client = new SubscriptionClient(DeviceInfo.Detect(store.Root).Headers);
         Connection = new Connection(store, singBox);
         Connection.Failed += text => Show(text, error: true);
+        if (!ReferenceEquals(State, loaded)) Persist();
     }
 
     public Store Store { get; }
@@ -316,8 +318,9 @@ public sealed class AppModel : Observable
 
     // MARK: ping
 
-    public async Task PingAsync(IReadOnlyList<Server> servers)
+    public async Task PingAsync(IReadOnlyList<Server> rows)
     {
+        var servers = State.PingTargets(rows);
         if (Pinging || servers.Count == 0) return;
         Pinging = true;
         try
@@ -364,7 +367,7 @@ public sealed class AppModel : Observable
     private void SetPing(Guid id, PingResult? result)
     {
         if (State.Servers.All(s => s.Id != id)) return;
-        State = State.UpdateServer(id, s => s with { LastPing = result });
+        State = State.SettingPing(result, id);
         StateChanged?.Invoke();
     }
 

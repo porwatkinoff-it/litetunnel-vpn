@@ -40,6 +40,8 @@ The system font: SF Pro, Roboto, Segoe UI Variable, and the desktop default
 | headline | 17 | semibold | subscription name, empty-state title |
 | body | 17 iOS · 16 Android · 14 desktop | regular | row titles, settings |
 | callout | 16 iOS · 15 Android · 13 desktop | regular | selected server under the status |
+| rowTitle | 15 iOS · 14 Android · 13 macOS, desktop | regular | server name in the list |
+| rowDetail | 11 | regular | «Протокол · транспорт» in the list, no gap under the name |
 | caption | 12 | regular | row detail line, ping, usage, "Обновлена…" |
 | footer | 13 iOS · 12 elsewhere | regular | section footers |
 
@@ -50,7 +52,9 @@ Sentence case everywhere; section headers are not upper-cased.
 
 - Spacing steps: 4, 8, 12, 16, 20, 24.
 - Lists are grouped: sections on `surface` over `background`, radius 10,
-  16 side inset. Row height at least 44 (48 on Android and desktop).
+  16 side inset. Row height at least 44 (48 on Android and desktop). The
+  server list is denser, so more fits: about 40 on Apple, 44 on Android, 38 on
+  desktop, and the two lines of a row sit right under each other.
 - Cards and the QR code: radius 12.
 - Buttons: radius 10. One primary (filled, accent) button per screen at most.
 - Desktop: a single column, 640 wide at most, centred; window at least
@@ -91,8 +95,9 @@ One scrolling list, title **LiteTunnel**. Toolbar: **Добавить** (add),
    - status, title style: «Подключено», «Подключение…», «Переподключение…»,
      «Отключение…», «Отключено». The button is disabled while disconnecting.
    - timer `MM:SS` or `H:MM:SS` while connected, callout, secondary.
-   - selected server name (callout, one line) and its protocol (caption,
-     secondary); «Сервер не выбран» when none.
+   - selected server name (callout, one line) and its protocol, or «Самый
+     быстрый из N» for a group (caption, secondary); «Сервер не выбран» when
+     none.
    - while connected: ↑ speed and total, ↓ speed and total, caption.
 2. **Empty state**, only with no servers and no subscriptions: `server.rack`
    large and secondary, «Серверов пока нет» (headline), «Добавьте ссылку на
@@ -111,16 +116,25 @@ One scrolling list, title **LiteTunnel**. Toolbar: **Добавить** (add),
      over 90%), then «12 ГБ из 100 ГБ» or «12 ГБ · без лимита» left and
      «до 1 дек. 2026 · 30 дн.» right (danger when expired), caption.
    - last line, caption secondary: «Обновлена 5 мин. назад», plus
-     « · 12 серверов» when folded. An error replaces it, in danger, two lines.
+     « · 12 серверов» when folded, counting real servers: the auto row and
+     groups count by the servers inside them, each once. An error replaces
+     it, in danger, two lines.
    - inside: the announce line first if any (`megaphone`, footer size,
-     secondary), then the servers.
+     secondary), then the auto row, then the servers.
 4. **«Мои серверы»**: servers added by link, swipe (or right-click) to delete.
 
-Server row: selection mark (accent when selected, secondary when not),
-12 gap, then name (body, one line) over «Протокол · транспорт» (caption,
-secondary, one line); then the ping badge and a details button. Tap the row
-to select; long-press / right-click: Подробнее · Проверить пинг · Копировать
-ссылку · Удалить.
+Server row: selection mark (accent when selected, secondary when not; 20 on
+Android, 18 on desktop), 10 gap, then name (rowTitle, one line) over
+«Протокол · транспорт» (rowDetail, secondary, one line); then the ping badge
+and a details button. Tap the row to select; long-press / right-click:
+Подробнее · Проверить пинг · Копировать ссылку · Удалить.
+
+Auto row: **Авто-выбор** over «Самый быстрый из N», first in its subscription.
+Every subscription with two or more servers gets one, unless a group from the
+provider already holds all of them; a group that holds only some does not
+count. The core picks the lowest ping. A new subscription starts on this row;
+a server chosen earlier stays chosen. It has no link to copy and no QR code,
+and lists its servers on the details screen.
 
 ### Ping badge
 
@@ -147,6 +161,7 @@ Sections in this order, with these labels:
    app runs as a proxy) · Локальная сеть мимо VPN · IPv6 · Фрагментация TLS.
 4. **Энергосбережение**: Умный сон.
 5. **Список серверов**: Сортировка (Как в подписке / По пингу / По имени).
+   Groups stay on top when sorting by ping or name.
 6. **Пинг**: Способ · Адрес проверки (proxy modes only) · Вид · Пинг при
    открытии · Пинг после обновления подписки. Footer explains the chosen way.
 7. **Дополнительно**: Определять сайт (sniffing) · Сетевой стек · MTU ·
@@ -168,7 +183,9 @@ Footers are written as on iOS (`App/Shared/Views/SettingsView.swift`).
 - Test address: `http://www.gstatic.com/generate_204` by default; any http or
   https address the user enters; anything else falls back to the default.
 - A request counts as passed with status 200–399, timed up to the response
-  headers; 5 s timeout. A group (Авто-выбор) shows its fastest member.
+  headers; 5 s timeout. A group (Авто-выбор) shows its fastest member. A group
+  whose servers are all rows of its subscription is measured through those
+  rows, so no server is tested twice.
 - The proxy modes start a short-lived second core with one local mixed
   inbound per server, routed inbound → that server, and close it when done.
   Its sockets go around the running VPN. If it does not start, show «Пинг

@@ -151,7 +151,8 @@ final class SubscriptionTests: XCTestCase {
 
         let server = Server(subscriptionID: nil, parsed: result.servers[0])
         XCTAssertEqual(server.members.map(\.host), ["a.example.com", "b.example.com"])
-        XCTAssertEqual(server.detail, "Авто-выбор из 2")
+        XCTAssertEqual(server.detail, "Самый быстрый из 2")
+        XCTAssertEqual(server.subtitle, "Самый быстрый из 2")
 
         let config = ConfigBuilder.build(server: server, settings: AppSettings(), ruleSetDirectory: nil)
         let outbounds = config["outbounds"]?.arrayValue ?? []
@@ -179,10 +180,10 @@ final class SubscriptionTests: XCTestCase {
 
         let first = try SubscriptionParser.parse(body: Data(Self.lines.joined(separator: "\n").utf8), headers: [:])
         state.apply(first, to: sub.id)
-        XCTAssertEqual(state.servers.map(\.name), ["Manual", "NL", "DE"])
-        let de = state.servers[2]
+        XCTAssertEqual(state.servers.map(\.name), ["Manual", "Авто-выбор", "NL", "DE"])
+        let de = state.servers[3]
         state.selectedServerID = de.id
-        state.servers[2].lastPing = .ms(42)
+        state.servers[3].lastPing = .ms(42)
 
         // Provider drops NL, keeps DE, adds US.
         let second = try SubscriptionParser.parse(body: Data([
@@ -190,9 +191,9 @@ final class SubscriptionTests: XCTestCase {
             "vless://id-3@us.example.com:443?security=tls#US",
         ].joined(separator: "\n").utf8), headers: ["profile-title": "Renamed"])
         state.apply(second, to: sub.id)
-        XCTAssertEqual(state.servers.map(\.name), ["Manual", "DE", "US"])
-        XCTAssertEqual(state.servers[1].id, de.id)
-        XCTAssertEqual(state.servers[1].lastPing, .ms(42))
+        XCTAssertEqual(state.servers.map(\.name), ["Manual", "Авто-выбор", "DE", "US"])
+        XCTAssertEqual(state.servers[2].id, de.id)
+        XCTAssertEqual(state.servers[2].lastPing, .ms(42))
         XCTAssertEqual(state.selectedServerID, de.id)
         XCTAssertEqual(state.subscriptions[0].name, "Renamed")
 
@@ -204,6 +205,149 @@ final class SubscriptionTests: XCTestCase {
         state.removeSubscription(sub.id)
         XCTAssertEqual(state.servers.map(\.name), ["Manual"])
         XCTAssertEqual(state.selectedServer?.name, "Manual")
+    }
+
+    // MARK: auto row
+
+    private func parsed(_ names: String...) throws -> [ParsedServer] {
+        try names.map { try ShareLink.parse("trojan://pw@\($0).example.com:443#\($0)") }
+    }
+
+    private func result(_ servers: [ParsedServer]) -> SubscriptionResult {
+        SubscriptionResult(servers: servers, skipped: [], meta: SubscriptionMeta(), routingLines: [])
+    }
+
+    private func subscription(_ state: inout AppState, _ servers: [ParsedServer]) -> UUID {
+        let sub = Subscription(name: "sub", url: URL(string: "https://s.example.com/x")!)
+        state.subscriptions.append(sub)
+        state.apply(result(servers), to: sub.id)
+        return sub.id
+    }
+
+    func testEverySubscriptionGetsAnAutoRow() throws {
+        var state = AppState()
+        let id = subscription(&state, try parsed("a", "b"))
+        XCTAssertEqual(state.servers.map(\.name), ["Авто-выбор", "a", "b"])
+
+        // A new subscription starts on it, and it lists the servers by name.
+        let auto = state.servers[0]
+        XCTAssertTrue(auto.isAuto)
+        XCTAssertEqual(state.selectedServerID, auto.id)
+        XCTAssertNil(auto.shareLink)
+        XCTAssertEqual(auto.subtitle, "Самый быстрый из 2")
+        XCTAssertEqual(auto.members.map(\.name), ["a", "b"])
+        XCTAssertEqual(state.serverCount(in: id), 2)
+
+        // A refresh keeps the row and adds the new server to it.
+        state.servers[0].lastPing = .ms(30)
+        state.apply(result(try parsed("a", "b", "c")), to: id)
+        XCTAssertEqual(state.servers[0].id, auto.id)
+        XCTAssertEqual(state.servers[0].lastPing, .ms(30))
+        XCTAssertEqual(state.servers[0].members.map(\.name), ["a", "b", "c"])
+        XCTAssertEqual(state.selectedServerID, auto.id)
+
+        // With one server left there is nothing to choose from.
+        state.apply(result(try parsed("c")), to: id)
+        XCTAssertEqual(state.servers.map(\.name), ["c"])
+        XCTAssertEqual(state.selectedServer?.name, "c")
+    }
+
+    func testAutoRowRunsAsAPlainGroup() throws {
+        var state = AppState()
+        _ = subscription(&state, try parsed("a", "b"))
+        let config = ConfigBuilder.build(server: state.servers[0], settings: AppSettings(), ruleSetDirectory: nil)
+        let outbounds = config["outbounds"]?.arrayValue ?? []
+        XCTAssertEqual(outbounds.compactMap { $0["tag"]?.stringValue }, ["proxy", "proxy-1", "proxy-2", "direct"])
+        XCTAssertEqual(outbounds[0]["type"], "urltest")
+        XCTAssertEqual(outbounds[0]["interval"], "10m")
+        XCTAssertNil(outbounds[0]["auto"])
+    }
+
+    func testProviderGroupCoveringEverythingIsEnough() throws {
+        let singles = try parsed("a", "b")
+        var state = AppState()
+        let id = subscription(&state, [ServerGroup.make(singles, name: "Группа")] + singles)
+        XCTAssertEqual(state.servers.map(\.name), ["Группа", "a", "b"])
+        XCTAssertEqual(state.serverCount(in: id), 2)
+
+        // The same with nothing but the group in the subscription.
+        var only = AppState()
+        let onlyID = subscription(&only, [ServerGroup.make(singles, name: "Группа")])
+        XCTAssertEqual(only.servers.map(\.name), ["Группа"])
+        XCTAssertEqual(only.serverCount(in: onlyID), 2)
+    }
+
+    func testProviderGroupOverSomeServersGetsAnAutoRowOverAll() throws {
+        let members = try parsed("a", "b")
+        var state = AppState()
+        let id = subscription(&state, [ServerGroup.make(members, name: "Группа")] + (try parsed("a", "c")))
+        XCTAssertEqual(state.servers.map(\.name), ["Авто-выбор", "Группа", "a", "c"])
+        XCTAssertEqual(state.servers[0].members.map(\.name), ["a", "c", "b.example.com:443"])
+        XCTAssertEqual(state.serverCount(in: id), 3)
+    }
+
+    func testSyncAddsAutoRowToOlderStateOnce() throws {
+        var state = AppState()
+        let id = UUID()
+        state.subscriptions = [Subscription(id: id, name: "sub", url: URL(string: "https://s.example.com/x")!)]
+        state.servers = try parsed("a", "b").map { Server(subscriptionID: id, parsed: $0) }
+        state.selectedServerID = state.servers[1].id
+
+        XCTAssertTrue(state.syncAutoGroups())
+        XCTAssertEqual(state.servers.map(\.name), ["Авто-выбор", "a", "b"])
+        XCTAssertEqual(state.selectedServer?.name, "b")
+
+        let auto = state.servers[0]
+        XCTAssertFalse(state.syncAutoGroups())
+        XCTAssertEqual(state.servers[0].id, auto.id)
+    }
+
+    func testSortKeepsGroupsOnTop() throws {
+        var state = AppState()
+        _ = subscription(&state, try parsed("b", "a"))
+        state.servers[1].lastPing = .ms(90)
+        state.servers[2].lastPing = .ms(10)
+        state.servers[0].lastPing = .ms(10)
+        state.settings.sortMode = .name
+        XCTAssertEqual(state.sorted(state.servers).map(\.name), ["Авто-выбор", "a", "b"])
+        state.settings.sortMode = .ping
+        XCTAssertEqual(state.sorted(state.servers).map(\.name), ["Авто-выбор", "a", "b"])
+    }
+
+    func testGroupIsPingedThroughItsRows() throws {
+        var state = AppState()
+        let id = subscription(&state, try parsed("a", "b"))
+        let (auto, a, b) = (state.servers[0], state.servers[1], state.servers[2])
+
+        // Each server once, whatever is asked for.
+        XCTAssertEqual(state.pingTargets([auto]).map(\.id), [a.id, b.id])
+        XCTAssertEqual(state.pingTargets(state.servers(in: id)).map(\.id), [a.id, b.id])
+        XCTAssertEqual(state.pingTargets([b]).map(\.id), [b.id])
+
+        // The group shows its fastest as results come in.
+        state.setPing(.ms(80), for: a.id)
+        XCTAssertEqual(state.servers[0].lastPing, .ms(80))
+        state.setPing(.ms(20), for: b.id)
+        XCTAssertEqual(state.servers[0].lastPing, .ms(20))
+        state.setPing(.failed, for: b.id)
+        XCTAssertEqual(state.servers[0].lastPing, .ms(80))
+        state.setPing(.failed, for: a.id)
+        XCTAssertEqual(state.servers[0].lastPing, .failed)
+    }
+
+    func testGroupWithoutItsRowsIsPingedItself() throws {
+        var state = AppState()
+        let group = ServerGroup.make(try parsed("a", "b"), name: "Группа")
+        _ = subscription(&state, [group])
+        let row = state.servers[0]
+        XCTAssertEqual(state.pingTargets([row]).map(\.id), [row.id])
+        state.setPing(.ms(50), for: row.id)
+        XCTAssertEqual(state.servers[0].lastPing, .ms(50))
+
+        // Servers added by hand are never treated as a group's rows.
+        var manual = AppState()
+        manual.addManual([group] + (try parsed("a", "b")))
+        XCTAssertEqual(manual.pingTargets([manual.servers[0]]).map(\.id), [manual.servers[0].id])
     }
 
     func testSortByPingIsStable() throws {

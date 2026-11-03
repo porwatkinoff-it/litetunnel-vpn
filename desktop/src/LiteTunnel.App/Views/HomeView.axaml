@@ -130,7 +130,7 @@
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:ServerRowViewModel">
                         <StackPanel>
-                          <Button Classes="plain row" Command="{Binding Select}" Padding="16,6,8,6"
+                          <Button Classes="plain row" Command="{Binding Select}" Padding="16,3,8,3" MinHeight="38"
                                   AutomationProperties.Name="{Binding Name}">
                             <Button.ContextMenu>
                               <ContextMenu>
@@ -141,22 +141,22 @@
                               </ContextMenu>
                             </Button.ContextMenu>
                             <DockPanel>
-                              <Panel DockPanel.Dock="Left" Width="22" Margin="0,0,12,0" VerticalAlignment="Center">
-                                <c:Icon Classes="accent" Data="{StaticResource Icon.check_circle}" Size="22" IsVisible="{Binding IsSelected}" />
-                                <c:Icon Classes="secondary" Data="{StaticResource Icon.unchecked}" Size="22" IsVisible="{Binding IsNotSelected}" />
+                              <Panel DockPanel.Dock="Left" Width="18" Margin="0,0,10,0" VerticalAlignment="Center">
+                                <c:Icon Classes="accent" Data="{StaticResource Icon.check_circle}" Size="18" IsVisible="{Binding IsSelected}" />
+                                <c:Icon Classes="secondary" Data="{StaticResource Icon.unchecked}" Size="18" IsVisible="{Binding IsNotSelected}" />
                               </Panel>
                               <Button DockPanel.Dock="Right" Classes="plain icon" Command="{Binding Info}" Margin="6,0,0,0"
                                       ToolTip.Tip="Подробнее" AutomationProperties.Name="Подробнее">
-                                <c:Icon Data="{StaticResource Icon.info}" />
+                                <c:Icon Data="{StaticResource Icon.info}" Size="18" />
                               </Button>
                               <c:PingBadge DockPanel.Dock="Right" Ping="{Binding Ping}" Display="{Binding Display}" Margin="8,0,0,0" />
-                              <StackPanel VerticalAlignment="Center" Spacing="1">
-                                <TextBlock Classes="body" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Classes="caption secondary" Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis" />
+                              <StackPanel VerticalAlignment="Center">
+                                <TextBlock Classes="rowTitle" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Classes="rowDetail secondary" Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis" />
                               </StackPanel>
                             </DockPanel>
                           </Button>
-                          <Rectangle Classes="sep rowsep" Margin="50,0,0,0" />
+                          <Rectangle Classes="sep rowsep" Margin="44,0,0,0" />
                         </StackPanel>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>

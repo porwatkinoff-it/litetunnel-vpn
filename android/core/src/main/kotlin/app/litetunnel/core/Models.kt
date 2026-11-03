@@ -59,10 +59,15 @@ data class Server(
 
     val matchKey: String get() = "${proto.raw}|$host|$port|$name"
 
+    val isGroup: Boolean get() = ServerGroup.members(outbound) != null
+
+    /** The row the app adds to a subscription, as opposed to a provider's group. */
+    val isAuto: Boolean get() = outbound[ServerGroup.AUTO_KEY]?.bool == true
+
     /** Transport and security in one short label, e.g. "Reality · Vision". */
     val detail: String
         get() {
-            ServerGroup.members(outbound)?.let { return "Авто-выбор из ${it.size}" }
+            ServerGroup.members(outbound)?.let { return "Самый быстрый из ${it.size}" }
             val parts = ArrayList<String>()
             val tls = outbound["tls"]
             if (tls != null && tls["enabled"]?.bool == true) {
@@ -75,6 +80,10 @@ data class Server(
             return parts.joinToString(" · ")
         }
 
+    /** The line under the name: "Протокол · транспорт", for a group its size. */
+    val subtitle: String
+        get() = if (isGroup) detail else listOf(proto.title, detail).filter { it.isNotEmpty() }.joinToString(" · ")
+
     /**
      * The servers of a group, each as its own Server; empty for a single server.
      * Built once: the proxy ping finds a member's local port by the object itself.
@@ -84,7 +93,7 @@ data class Server(
             val proto = ProxyProtocol.of(member["type"]?.string) ?: return@mapNotNull null
             val host = member["server"]?.string ?: return@mapNotNull null
             val port = member["server_port"]?.int ?: return@mapNotNull null
-            Server(subscriptionId, ParsedServer("$host:$port", proto, host, port, member, null))
+            Server(subscriptionId, ParsedServer(member["tag"]?.string ?: "$host:$port", proto, host, port, member, null))
         }
     }
 }
@@ -271,22 +280,18 @@ data class AppState(
         )
         val subs = subscriptions.toMutableList().also { it[index] = sub }
 
+        val previousRows = servers(subscriptionId)
         val oldByKey = LinkedHashMap<String, Server>()
-        for (server in servers) {
-            if (server.subscriptionId == subscriptionId) oldByKey.putIfAbsent(server.matchKey, server)
+        for (server in previousRows) {
+            if (!server.isAuto) oldByKey.putIfAbsent(server.matchKey, server)
         }
-        val fresh = result.servers.map { parsed ->
+        val rows = result.servers.map { parsed ->
             val server = Server(subscriptionId, parsed)
             val previous = oldByKey.remove(parsed.matchKey)
             if (previous != null) server.copy(id = previous.id, lastPing = previous.lastPing) else server
         }
-
-        // Keep the subscription's block where it was in the list.
-        val found = servers.indexOfFirst { it.subscriptionId == subscriptionId }
-        val insertAt = if (found >= 0) found else servers.size
-        val before = servers.subList(0, insertAt).filter { it.subscriptionId != subscriptionId }
-        val after = servers.subList(insertAt, servers.size).filter { it.subscriptionId != subscriptionId }
-        val list = before + fresh + after
+        val fresh = withAutoRow(rows, subscriptionId, previousRows)
+        val list = replacingServers(subscriptionId, fresh)
 
         var selected = selectedServerId
         if (selected != null && list.none { it.id == selected }) {
@@ -295,6 +300,83 @@ data class AppState(
         }
         if (selected == null) selected = fresh.firstOrNull()?.id
         return copy(subscriptions = subs, servers = list, selectedServerId = selected)
+    }
+
+    private fun withAutoRow(rows: List<Server>, subscriptionId: UUID, previous: List<Server>): List<Server> {
+        val auto = ServerGroup.auto(rows) ?: return rows
+        val old = previous.firstOrNull { it.isAuto }
+        val row = Server(subscriptionId, auto, old?.id ?: UUID.randomUUID()).copy(lastPing = old?.lastPing)
+        return listOf(row) + rows
+    }
+
+    /** Keeps the subscription's block where it was in the list. */
+    private fun replacingServers(subscriptionId: UUID, fresh: List<Server>): List<Server> {
+        val found = servers.indexOfFirst { it.subscriptionId == subscriptionId }
+        val insertAt = if (found >= 0) found else servers.size
+        val before = servers.subList(0, insertAt).filter { it.subscriptionId != subscriptionId }
+        val after = servers.subList(insertAt, servers.size).filter { it.subscriptionId != subscriptionId }
+        return before + fresh + after
+    }
+
+    /**
+     * Gives subscriptions saved before auto rows existed their row, and drops
+     * or rebuilds one that no longer matches. The same state when nothing changed.
+     */
+    fun syncAutoGroups(): AppState {
+        var next = this
+        for (sub in subscriptions) {
+            val old = next.servers(sub.id)
+            if (old.isEmpty()) continue
+            val fresh = next.withAutoRow(old.filter { !it.isAuto }, sub.id, old)
+            next = next.copy(servers = next.replacingServers(sub.id, fresh))
+        }
+        val selected = next.selectedServerId
+        if (selected != null && next.servers.none { it.id == selected }) {
+            next = next.copy(selectedServerId = next.servers.firstOrNull()?.id)
+        }
+        return if (next.servers == servers && next.selectedServerId == selectedServerId) this else next
+    }
+
+    /** How many different servers a subscription holds, however many rows repeat them. */
+    fun serverCount(subscriptionId: UUID?): Int = ServerGroup.uniqueMembers(servers(subscriptionId)).size
+
+    /** The subscription's rows that make up a group, or null when not all of them are listed. */
+    private fun memberRows(group: Server): List<Server>? {
+        if (group.subscriptionId == null) return null
+        val members = ServerGroup.members(group.outbound) ?: return null
+        val byKey = HashMap<Json, Server>()
+        for (row in servers(group.subscriptionId)) {
+            if (!row.isGroup) byKey.putIfAbsent(ServerGroup.key(row.outbound), row)
+        }
+        val rows = members.mapNotNull { byKey[ServerGroup.key(it)] }
+        return if (rows.size == members.size) rows else null
+    }
+
+    /**
+     * What to measure for these rows, each server once. A group that repeats
+     * its subscription's rows is measured through them.
+     */
+    fun pingTargets(list: List<Server>): List<Server> {
+        val seen = HashSet<UUID>()
+        val result = ArrayList<Server>()
+        for (server in list) {
+            for (target in memberRows(server) ?: listOf(server)) {
+                if (seen.add(target.id)) result.add(target)
+            }
+        }
+        return result
+    }
+
+    /** Records a result, and the fastest on the groups the row belongs to. */
+    fun settingPing(result: PingResult?, id: UUID): AppState {
+        val next = updateServer(id) { it.copy(lastPing = result) }
+        val row = next.servers.firstOrNull { it.id == id } ?: return this
+        if (row.isGroup || row.subscriptionId == null) return next
+        return next.servers(row.subscriptionId).filter { it.isGroup }.fold(next) { state, group ->
+            val rows = state.memberRows(group)
+            if (rows == null || rows.none { it.id == id }) state
+            else state.updateServer(group.id) { it.copy(lastPing = Ping.fastest(rows.map { r -> r.lastPing })) }
+        }
     }
 
     fun removeSubscription(id: UUID): AppState {
@@ -315,11 +397,15 @@ data class AppState(
     fun updateSubscription(id: UUID, change: (Subscription) -> Subscription): AppState =
         copy(subscriptions = subscriptions.map { if (it.id == id) change(it) else it })
 
-    fun sorted(list: List<Server>): List<Server> = when (settings.sortMode) {
-        SortMode.NONE -> list
-        SortMode.NAME -> list.sortedWith(compareBy(NaturalOrder) { it.name })
-        // sortedBy is stable: servers without a result keep their order at the end.
-        SortMode.PING -> list.sortedBy { it.lastPing?.sortValue ?: Int.MAX_VALUE }
+    fun sorted(list: List<Server>): List<Server> {
+        if (settings.sortMode == SortMode.NONE) return list
+        // Groups stay on top in any order: they are not one more server to compare.
+        val (groups, rest) = list.partition { it.isGroup }
+        return groups + when (settings.sortMode) {
+            SortMode.NAME -> rest.sortedWith(compareBy(NaturalOrder) { it.name })
+            // sortedBy is stable: servers without a result keep their order at the end.
+            else -> rest.sortedBy { it.lastPing?.sortValue ?: Int.MAX_VALUE }
+        }
     }
 }
 

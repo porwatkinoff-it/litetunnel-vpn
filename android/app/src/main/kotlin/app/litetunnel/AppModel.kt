@@ -68,7 +68,8 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val disk = Dispatchers.IO.limitedParallelism(1)
 
-    var state by mutableStateOf(store.loadState())
+    private val loaded = store.loadState()
+    var state by mutableStateOf(loaded.syncAutoGroups())
         private set
     var refreshing by mutableStateOf(emptySet<UUID>())
         private set
@@ -97,6 +98,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     private val client by lazy { SubscriptionClient(deviceInfo().headers) }
 
     init {
+        if (state !== loaded) viewModelScope.launch { persist(state) }
         viewModelScope.launch { Tunnel.errors.collect { show(it, error = true) } }
         viewModelScope.launch { checkRuleSets() }
     }
@@ -330,7 +332,8 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun pingNow(servers: List<Server>) {
+    private suspend fun pingNow(rows: List<Server>) {
+        val servers = state.pingTargets(rows)
         if (pinging || servers.isEmpty()) return
         pinging = true
         try {
@@ -361,7 +364,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun setPing(id: UUID, result: PingResult?) {
-        state = state.updateServer(id) { it.copy(lastPing = result) }
+        state = state.settingPing(result, id)
     }
 
     // rule-sets

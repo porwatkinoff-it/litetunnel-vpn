@@ -9,6 +9,7 @@ import org.junit.Test
 import java.nio.file.Files
 import java.time.Instant
 import java.util.Base64
+import java.util.UUID
 
 /** Ported from Packages/LiteKit/Tests/LiteKitTests/SubscriptionTests.swift. */
 class SubscriptionTests {
@@ -180,7 +181,8 @@ class SubscriptionTests {
 
         val server = Server(null, result.servers[0])
         assertEquals(listOf("a.example.com", "b.example.com"), server.members.map { it.host })
-        assertEquals("Авто-выбор из 2", server.detail)
+        assertEquals("Самый быстрый из 2", server.detail)
+        assertEquals("Самый быстрый из 2", server.subtitle)
 
         val config = ConfigBuilder.build(server, AppSettings(), null)
         val outbounds = config["outbounds"]?.array.orEmpty()
@@ -203,11 +205,11 @@ class SubscriptionTests {
         state = state.copy(subscriptions = state.subscriptions + sub)
 
         state = state.apply(parse(lines.joinToString("\n")), sub.id)
-        assertEquals(listOf("Manual", "NL", "DE"), state.servers.map { it.name })
+        assertEquals(listOf("Manual", "Авто-выбор", "NL", "DE"), state.servers.map { it.name })
         assertEquals(1, state.subscriptions[0].skippedCount)
         assertTrue(state.subscriptions[0].skippedReasons.single().contains("XHTTP"))
         assertFalse("the skipped line holds keys", state.subscriptions[0].skippedReasons.single().contains("://"))
-        val de = state.servers[2]
+        val de = state.servers[3]
         state = state.copy(selectedServerId = de.id).updateServer(de.id) { it.copy(lastPing = PingResult.Ms(42)) }
 
         // Provider drops NL, keeps DE, adds US.
@@ -219,9 +221,9 @@ class SubscriptionTests {
             mapOf("profile-title" to "Renamed"),
         )
         state = state.apply(second, sub.id)
-        assertEquals(listOf("Manual", "DE", "US"), state.servers.map { it.name })
-        assertEquals(de.id, state.servers[1].id)
-        assertEquals(PingResult.Ms(42), state.servers[1].lastPing)
+        assertEquals(listOf("Manual", "Авто-выбор", "DE", "US"), state.servers.map { it.name })
+        assertEquals(de.id, state.servers[2].id)
+        assertEquals(PingResult.Ms(42), state.servers[2].lastPing)
         assertEquals(de.id, state.selectedServerId)
         assertEquals("Renamed", state.subscriptions[0].name)
 
@@ -232,6 +234,137 @@ class SubscriptionTests {
         state = state.removeSubscription(sub.id)
         assertEquals(listOf("Manual"), state.servers.map { it.name })
         assertEquals("Manual", state.selectedServer?.name)
+    }
+
+    // auto row
+
+    private fun parsed(vararg names: String) = names.map { ShareLink.parse("trojan://pw@$it.example.com:443#$it") }
+
+    private fun result(servers: List<ParsedServer>) = SubscriptionResult(servers.toMutableList())
+
+    private fun subscribed(servers: List<ParsedServer>, state: AppState = AppState()): Pair<AppState, UUID> {
+        val sub = Subscription(name = "sub", url = "https://s.example.com/x")
+        return state.copy(subscriptions = state.subscriptions + sub).apply(result(servers), sub.id) to sub.id
+    }
+
+    @Test
+    fun everySubscriptionGetsAnAutoRow() {
+        var (state, id) = subscribed(parsed("a", "b"))
+        assertEquals(listOf("Авто-выбор", "a", "b"), state.servers.map { it.name })
+
+        // A new subscription starts on it, and it lists the servers by name.
+        val auto = state.servers[0]
+        assertTrue(auto.isAuto)
+        assertEquals(auto.id, state.selectedServerId)
+        assertNull(auto.shareLink)
+        assertEquals("Самый быстрый из 2", auto.subtitle)
+        assertEquals(listOf("a", "b"), auto.members.map { it.name })
+        assertEquals(2, state.serverCount(id))
+
+        // A refresh keeps the row and adds the new server to it.
+        state = state.updateServer(auto.id) { it.copy(lastPing = PingResult.Ms(30)) }
+        state = state.apply(result(parsed("a", "b", "c")), id)
+        assertEquals(auto.id, state.servers[0].id)
+        assertEquals(PingResult.Ms(30), state.servers[0].lastPing)
+        assertEquals(listOf("a", "b", "c"), state.servers[0].members.map { it.name })
+        assertEquals(auto.id, state.selectedServerId)
+
+        // With one server left there is nothing to choose from.
+        state = state.apply(result(parsed("c")), id)
+        assertEquals(listOf("c"), state.servers.map { it.name })
+        assertEquals("c", state.selectedServer?.name)
+    }
+
+    @Test
+    fun autoRowRunsAsAPlainGroup() {
+        val (state) = subscribed(parsed("a", "b"))
+        val outbounds = ConfigBuilder.build(state.servers[0], AppSettings(), null)["outbounds"]?.array.orEmpty()
+        assertEquals(listOf("proxy", "proxy-1", "proxy-2", "direct"), outbounds.mapNotNull { it["tag"]?.string })
+        assertEquals("urltest", outbounds[0]["type"]?.string)
+        assertEquals("10m", outbounds[0]["interval"]?.string)
+        assertNull(outbounds[0]["auto"])
+    }
+
+    @Test
+    fun providerGroupCoveringEverythingIsEnough() {
+        val singles = parsed("a", "b")
+        val (state, id) = subscribed(listOf(ServerGroup.make(singles, "Группа")) + singles)
+        assertEquals(listOf("Группа", "a", "b"), state.servers.map { it.name })
+        assertEquals(2, state.serverCount(id))
+
+        // The same with nothing but the group in the subscription.
+        val (only, onlyId) = subscribed(listOf(ServerGroup.make(singles, "Группа")))
+        assertEquals(listOf("Группа"), only.servers.map { it.name })
+        assertEquals(2, only.serverCount(onlyId))
+    }
+
+    @Test
+    fun providerGroupOverSomeServersGetsAnAutoRowOverAll() {
+        val (state, id) = subscribed(listOf(ServerGroup.make(parsed("a", "b"), "Группа")) + parsed("a", "c"))
+        assertEquals(listOf("Авто-выбор", "Группа", "a", "c"), state.servers.map { it.name })
+        assertEquals(listOf("a", "c", "b.example.com:443"), state.servers[0].members.map { it.name })
+        assertEquals(3, state.serverCount(id))
+    }
+
+    @Test
+    fun syncAddsAutoRowToOlderStateOnce() {
+        val sub = Subscription(name = "sub", url = "https://s.example.com/x")
+        val rows = parsed("a", "b").map { Server(sub.id, it) }
+        val older = AppState(subscriptions = listOf(sub), servers = rows, selectedServerId = rows[1].id)
+
+        val state = older.syncAutoGroups()
+        assertEquals(listOf("Авто-выбор", "a", "b"), state.servers.map { it.name })
+        assertEquals("b", state.selectedServer?.name)
+
+        val again = state.syncAutoGroups()
+        assertEquals(state, again)
+        assertEquals(state.servers[0].id, again.servers[0].id)
+    }
+
+    @Test
+    fun sortKeepsGroupsOnTop() {
+        val (start) = subscribed(parsed("b", "a"))
+        val pings = listOf(PingResult.Ms(10), PingResult.Ms(90), PingResult.Ms(10))
+        val state = start.copy(servers = start.servers.mapIndexed { i, s -> s.copy(lastPing = pings[i]) })
+        val byName = state.copy(settings = state.settings.copy(sortMode = SortMode.NAME))
+        assertEquals(listOf("Авто-выбор", "a", "b"), byName.sorted(byName.servers).map { it.name })
+        val byPing = state.copy(settings = state.settings.copy(sortMode = SortMode.PING))
+        assertEquals(listOf("Авто-выбор", "a", "b"), byPing.sorted(byPing.servers).map { it.name })
+    }
+
+    @Test
+    fun groupIsPingedThroughItsRows() {
+        var (state, id) = subscribed(parsed("a", "b"))
+        val (auto, a, b) = state.servers
+
+        // Each server once, whatever is asked for.
+        assertEquals(listOf(a.id, b.id), state.pingTargets(listOf(auto)).map { it.id })
+        assertEquals(listOf(a.id, b.id), state.pingTargets(state.servers(id)).map { it.id })
+        assertEquals(listOf(b.id), state.pingTargets(listOf(b)).map { it.id })
+
+        // The group shows its fastest as results come in.
+        state = state.settingPing(PingResult.Ms(80), a.id)
+        assertEquals(PingResult.Ms(80), state.servers[0].lastPing)
+        state = state.settingPing(PingResult.Ms(20), b.id)
+        assertEquals(PingResult.Ms(20), state.servers[0].lastPing)
+        state = state.settingPing(PingResult.Failed, b.id)
+        assertEquals(PingResult.Ms(80), state.servers[0].lastPing)
+        state = state.settingPing(PingResult.Failed, a.id)
+        assertEquals(PingResult.Failed, state.servers[0].lastPing)
+    }
+
+    @Test
+    fun groupWithoutItsRowsIsPingedItself() {
+        val group = ServerGroup.make(parsed("a", "b"), "Группа")
+        var (state) = subscribed(listOf(group))
+        val row = state.servers[0]
+        assertEquals(listOf(row.id), state.pingTargets(listOf(row)).map { it.id })
+        state = state.settingPing(PingResult.Ms(50), row.id)
+        assertEquals(PingResult.Ms(50), state.servers[0].lastPing)
+
+        // Servers added by hand are never treated as a group's rows.
+        val manual = AppState().addManual(listOf(group) + parsed("a", "b")).first
+        assertEquals(listOf(manual.servers[0].id), manual.pingTargets(listOf(manual.servers[0])).map { it.id })
     }
 
     @Test

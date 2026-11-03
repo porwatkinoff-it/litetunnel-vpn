@@ -81,7 +81,9 @@ public sealed class HomeViewModel : PageViewModel
 
     public string ServerName => Model.State.SelectedServer?.Name ?? "Сервер не выбран";
 
-    public string ServerProto => Model.State.SelectedServer?.Proto.Title() ?? "";
+    public string ServerProto => Model.State.SelectedServer is { } server
+        ? server.IsGroup ? server.Detail : server.Proto.Title()
+        : "";
 
     public bool ShowTraffic => IsOn;
 
@@ -277,6 +279,7 @@ public sealed class SectionViewModel : Observable
     private readonly Dictionary<Guid, ServerRowViewModel> rows = [];
     private bool isFolded;
     private int count;
+    private int serverCount;
 
     public SectionViewModel(HomeViewModel home, Guid? subscriptionId, bool folded)
     {
@@ -352,7 +355,7 @@ public sealed class SectionViewModel : Observable
     public string? Updated =>
         HasError || Subscription?.LastUpdated is not { } date
             ? null
-            : isFolded ? $"Обновлена {Format.Relative(date)} · {Format.Servers(count)}" : $"Обновлена {Format.Relative(date)}";
+            : isFolded ? $"Обновлена {Format.Relative(date)} · {Format.Servers(serverCount)}" : $"Обновлена {Format.Relative(date)}";
 
     public bool HasUpdated => Updated is not null;
 
@@ -395,6 +398,7 @@ public sealed class SectionViewModel : Observable
         Subscription = SubscriptionId is { } id ? state.Subscriptions.FirstOrDefault(s => s.Id == id) : null;
         var servers = state.Sorted(state.ServersOf(SubscriptionId));
         count = servers.Count;
+        serverCount = state.ServerCount(SubscriptionId);
         var display = state.Settings.PingDisplay;
         var target = new List<ServerRowViewModel>(servers.Count);
         foreach (var server in servers)
@@ -439,7 +443,7 @@ public sealed class ServerRowViewModel : Observable
 
     public string Name => server.Name;
 
-    public string Subtitle => string.Join(" · ", new[] { server.Proto.Title(), server.Detail }.Where(s => !string.IsNullOrEmpty(s)));
+    public string Subtitle => server.Subtitle;
 
     public PingResult? Ping => server.LastPing;
 

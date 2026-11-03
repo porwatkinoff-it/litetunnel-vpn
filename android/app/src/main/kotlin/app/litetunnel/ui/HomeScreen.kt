@@ -30,6 +30,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -59,6 +61,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -121,7 +124,7 @@ fun HomeScreen(model: AppModel, onToggle: () -> Unit) {
                 item(key = sub.id) {
                     val servers = state.servers(sub.id)
                     val collapsed = sub.id.toString() in model.collapsed
-                    Section(headerContent = { SubscriptionHeader(model, sub, servers.size, collapsed) }) {
+                    Section(headerContent = { SubscriptionHeader(model, sub, state.serverCount(sub.id), collapsed) }) {
                         if (!collapsed) {
                             sub.announce?.takeIf { it.isNotBlank() }?.let { Announce(it) }
                             for (server in state.sorted(servers)) ServerRow(model, server)
@@ -198,7 +201,7 @@ private fun ConnectCard(tunnel: TunnelState, server: Server?, onToggle: () -> Un
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (server != null) {
                 Text(server.name, style = LiteType.callout, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(server.proto.title, style = LiteType.caption, color = Lite.colors.secondary)
+                Text(if (server.isGroup) server.detail else server.proto.title, style = LiteType.caption, color = Lite.colors.secondary)
             } else {
                 Text("Сервер не выбран", style = LiteType.callout, color = Lite.colors.secondary)
             }
@@ -451,25 +454,33 @@ private fun ServerRow(model: AppModel, server: Server) {
                 )
                 .semantics { if (selected) stateDescription = "выбран" }
                 .fillMaxWidth()
-                .heightIn(min = 52.dp)
-                .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                .heightIn(min = 44.dp)
+                .padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 painterResource(if (selected) R.drawable.ic_check_circle else R.drawable.ic_unchecked),
                 contentDescription = null,
                 tint = if (selected) Lite.colors.accent else Lite.colors.secondary,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(20.dp),
             )
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(server.name, style = LiteType.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(describe(server), style = LiteType.caption, color = Lite.colors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(server.name, style = LiteType.rowTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(server.subtitle, style = LiteType.rowDetail, color = Lite.colors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.width(8.dp))
             server.lastPing?.let { PingBadge(it, model.settings.pingDisplay) }
-            IconButton(onClick = openDetails, modifier = Modifier.semantics { onClick(label = "Подробнее о сервере", action = null) }) {
-                Icon(painterResource(R.drawable.ic_info), contentDescription = "Подробнее о сервере", tint = Lite.colors.accent)
+            // Without the 48 minimum, which would hold every row taller than it needs.
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                IconButton(onClick = openDetails, modifier = Modifier.semantics { onClick(label = "Подробнее о сервере", action = null) }) {
+                    Icon(
+                        painterResource(R.drawable.ic_info),
+                        contentDescription = "Подробнее о сервере",
+                        tint = Lite.colors.accent,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.align(Alignment.TopEnd)) {
@@ -516,6 +527,3 @@ private fun SwipeToDelete(onDelete: () -> Unit, content: @Composable () -> Unit)
         },
     ) { content() }
 }
-
-/** "Протокол · транспорт". */
-fun describe(server: Server): String = listOf(server.proto.title, server.detail).filter { it.isNotEmpty() }.joinToString(" · ")

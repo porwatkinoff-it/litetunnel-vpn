@@ -69,6 +69,8 @@ struct HomeView: View {
                 }
             }
             .textCase(nil)
+            .environment(\.defaultMinListRowHeight, 36)
+            .compactSectionSpacing()
             .refreshable { await model.refreshAll() }
             .navigationTitle("LiteTunnel")
             .navigationDestination(for: UUID.self) { id in
@@ -113,6 +115,8 @@ struct HomeView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { model.select(server.id) }
+        // No vertical inset: the row's own padding keeps all of it tappable.
+        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 12))
         .contextMenu {
             Button {
                 path.append(server.id)
@@ -186,16 +190,25 @@ struct ServerRow: View {
     let pingDisplay: PingDisplay
     let onInfo: () -> Void
 
+    // Text styles, so the row still follows the system text size.
+    #if os(macOS)
+    private static let titleFont = Font.body
+    private static let detailFont = Font.subheadline
+    #else
+    private static let titleFont = Font.subheadline
+    private static let detailFont = Font.caption2
+    #endif
+
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                .imageScale(.large)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text(server.name)
+                    .font(Self.titleFont)
                     .lineLimit(1)
-                Text([server.proto.title, server.detail].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.caption)
+                Text(server.subtitle)
+                    .font(Self.detailFont)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -209,7 +222,23 @@ struct ServerRow: View {
             .buttonStyle(.borderless)
             .accessibilityLabel("Подробнее о сервере")
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
+    }
+}
+
+private extension View {
+    /// Less air between subscriptions. iOS 17 and later.
+    @ViewBuilder
+    func compactSectionSpacing() -> some View {
+        #if os(iOS)
+        if #available(iOS 17, *) {
+            listSectionSpacing(.compact)
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
     }
 }
 
@@ -298,7 +327,7 @@ struct SubscriptionHeader: View {
             } else if let updated = subscription.lastUpdated {
                 // Folded, the count says what is hidden.
                 Text(["Обновлена \(Format.relative(updated))",
-                      collapsed ? Format.servers(model.state.servers(in: subscription.id).count) : nil]
+                      collapsed ? Format.servers(model.state.serverCount(in: subscription.id)) : nil]
                     .compactMap { $0 }.joined(separator: " · "))
                     .font(.caption)
                     .foregroundStyle(.secondary)

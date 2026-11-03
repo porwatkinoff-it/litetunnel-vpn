@@ -117,7 +117,7 @@ fun SubscriptionScreen(model: AppModel, id: UUID) {
             }
 
             section(header = "Состояние") {
-                ValueRow("Серверов", model.state.servers(sub.id).size.toString())
+                ValueRow("Серверов", model.state.serverCount(sub.id).toString())
                 if (sub.skippedCount > 0) ValueRow("Пропущено строк", sub.skippedCount.toString())
                 sub.lastUpdated?.let { ValueRow("Обновлена", Format.relative(it)) }
                 sub.lastError?.let { Text(it, color = Lite.colors.danger, modifier = Modifier.padding(RowPadding)) }

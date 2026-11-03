@@ -65,7 +65,7 @@ struct SubscriptionView: View {
                 }
 
                 Section("Состояние") {
-                    LabeledContent("Серверов", value: "\(model.state.servers(in: draft.id).count)")
+                    LabeledContent("Серверов", value: "\(model.state.serverCount(in: draft.id))")
                     if current.skippedCount > 0 {
                         LabeledContent("Пропущено строк", value: "\(current.skippedCount)")
                     }

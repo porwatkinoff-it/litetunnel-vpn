@@ -2,8 +2,11 @@ package app.litetunnel.ui
 
 import android.content.Intent
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -18,6 +21,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import app.litetunnel.AppModel
 import app.litetunnel.core.Server
 import java.util.UUID
@@ -40,9 +45,11 @@ fun ServerDetailScreen(model: AppModel, id: UUID) {
 
         LazyColumn(Modifier.fillMaxSize().padding(padding)) {
             section {
-                ValueRow("Протокол", server.proto.title)
-                ValueRow("Адрес", "${server.host}:${server.port}")
-                if (server.detail.isNotEmpty()) ValueRow("Транспорт", server.detail)
+                if (members.isEmpty()) {
+                    ValueRow("Протокол", server.proto.title)
+                    ValueRow("Адрес", "${server.host}:${server.port}")
+                    if (server.detail.isNotEmpty()) ValueRow("Транспорт", server.detail)
+                }
                 val ping = server.lastPing
                 ValueRow("Пинг", ping?.label ?: "—", ping?.color ?: Lite.colors.secondary)
                 subscription?.let { ValueRow("Подписка", it.name) }
@@ -53,7 +60,12 @@ fun ServerDetailScreen(model: AppModel, id: UUID) {
                     header = "Серверы: ${members.size}",
                     footer = "Ядро само выбирает самый быстрый и переходит на другой, если этот перестал отвечать. Проверка раз в 10 минут.",
                 ) {
-                    for (member in members) ValueRow(member.host, describe(member))
+                    for (member in members) {
+                        Column(Modifier.fillMaxWidth().padding(RowPadding), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(member.name, style = LiteType.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(member.subtitle, style = LiteType.caption, color = Lite.colors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
             }
 

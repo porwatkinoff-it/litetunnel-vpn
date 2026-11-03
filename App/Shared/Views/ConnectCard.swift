@@ -44,7 +44,7 @@ struct ConnectCard: View {
                     Text(server.name)
                         .font(.callout)
                         .lineLimit(1)
-                    Text(server.proto.title)
+                    Text(server.isGroup ? server.detail : server.proto.title)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

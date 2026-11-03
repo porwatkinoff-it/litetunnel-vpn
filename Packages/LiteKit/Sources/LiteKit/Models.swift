@@ -66,7 +66,7 @@ public struct Server: Codable, Identifiable, Hashable, Sendable {
 
     /// Transport and security in one short label, e.g. "Reality · Vision".
     public var detail: String {
-        if let members = ServerGroup.members(of: outbound) { return "Авто-выбор из \(members.count)" }
+        if let members = ServerGroup.members(of: outbound) { return "Самый быстрый из \(members.count)" }
         var parts: [String] = []
         if let tls = outbound["tls"], tls["enabled"]?.boolValue == true {
             parts.append(tls["reality"]?["enabled"]?.boolValue == true ? "Reality" : "TLS")
@@ -84,6 +84,12 @@ public struct Server: Codable, Identifiable, Hashable, Sendable {
             parts.append("hopping")
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// The line under the name in a list. A group has no protocol of its own.
+    public var subtitle: String {
+        if isGroup { return detail }
+        return [proto.title, detail].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 
@@ -316,10 +322,10 @@ public struct AppState: Codable, Sendable {
 
         let old = servers.filter { $0.subscriptionID == subscriptionID }
         var oldByKey: [String: Server] = [:]
-        for server in old where oldByKey[server.matchKey] == nil {
+        for server in old where !server.isAuto && oldByKey[server.matchKey] == nil {
             oldByKey[server.matchKey] = server
         }
-        let fresh: [Server] = result.servers.map { parsed in
+        let rows: [Server] = result.servers.map { parsed in
             var server = Server(subscriptionID: subscriptionID, parsed: parsed)
             if let previous = oldByKey.removeValue(forKey: parsed.matchKey) {
                 server.id = previous.id
@@ -327,18 +333,93 @@ public struct AppState: Codable, Sendable {
             }
             return server
         }
-
-        // Keep the subscription's block where it was in the list.
-        let insertAt = servers.firstIndex { $0.subscriptionID == subscriptionID } ?? servers.count
-        let before = servers[..<insertAt].filter { $0.subscriptionID != subscriptionID }
-        let after = servers[insertAt...].filter { $0.subscriptionID != subscriptionID }
-        servers = Array(before) + fresh + Array(after)
+        let fresh = withAutoRow(rows, in: subscriptionID, previous: old)
+        replaceServers(in: subscriptionID, with: fresh)
 
         if let selected = selectedServerID, !servers.contains(where: { $0.id == selected }) {
             // The selected server left the subscription: fall back to its first server.
             selectedServerID = fresh.first?.id ?? servers.first?.id
         }
         if selectedServerID == nil { selectedServerID = fresh.first?.id }
+    }
+
+    /// A subscription's rows with its auto row in front, when it gets one.
+    private func withAutoRow(_ rows: [Server], in subscriptionID: UUID, previous: [Server]) -> [Server] {
+        guard let auto = ServerGroup.auto(for: rows) else { return rows }
+        var row = Server(subscriptionID: subscriptionID, parsed: auto)
+        if let old = previous.first(where: \.isAuto) {
+            row.id = old.id
+            row.lastPing = old.lastPing
+        }
+        return [row] + rows
+    }
+
+    /// Keeps the subscription's block where it was in the list.
+    private mutating func replaceServers(in subscriptionID: UUID, with fresh: [Server]) {
+        let insertAt = servers.firstIndex { $0.subscriptionID == subscriptionID } ?? servers.count
+        let before = servers[..<insertAt].filter { $0.subscriptionID != subscriptionID }
+        let after = servers[insertAt...].filter { $0.subscriptionID != subscriptionID }
+        servers = Array(before) + fresh + Array(after)
+    }
+
+    /// Gives every subscription the auto row it should have: a state saved by
+    /// an older build has none. Returns whether anything changed.
+    public mutating func syncAutoGroups() -> Bool {
+        let before = servers
+        for sub in subscriptions {
+            let old = servers(in: sub.id)
+            guard !old.isEmpty else { continue }
+            replaceServers(in: sub.id, with: withAutoRow(old.filter { !$0.isAuto }, in: sub.id, previous: old))
+        }
+        if let selected = selectedServerID, !servers.contains(where: { $0.id == selected }) {
+            selectedServerID = servers.first?.id
+        }
+        return servers != before
+    }
+
+    /// How many servers a subscription really has: groups repeat them.
+    public func serverCount(in subscriptionID: UUID?) -> Int {
+        ServerGroup.uniqueMembers(of: servers(in: subscriptionID)).count
+    }
+
+    /// The rows standing for a group's members, when its subscription lists
+    /// them all on their own.
+    private func memberRows(of group: Server) -> [Server]? {
+        guard group.subscriptionID != nil, let members = ServerGroup.members(of: group.outbound) else { return nil }
+        var byKey: [JSONValue: Server] = [:]
+        for row in servers(in: group.subscriptionID) where !row.isGroup {
+            let key = ServerGroup.key(row.outbound)
+            if byKey[key] == nil { byKey[key] = row }
+        }
+        let rows = members.compactMap { byKey[ServerGroup.key($0)] }
+        return rows.count == members.count ? rows : nil
+    }
+
+    /// What to measure for these rows. A group that repeats its subscription's
+    /// rows is measured through them, so no server is tested twice.
+    public func pingTargets(_ list: [Server]) -> [Server] {
+        var seen = Set<UUID>()
+        var result: [Server] = []
+        for server in list {
+            for target in memberRows(of: server) ?? [server] where seen.insert(target.id).inserted {
+                result.append(target)
+            }
+        }
+        return result
+    }
+
+    /// Records a result, and in the groups built from this row their fastest.
+    public mutating func setPing(_ result: PingResult?, for id: UUID) {
+        guard let index = servers.firstIndex(where: { $0.id == id }) else { return }
+        servers[index].lastPing = result
+        let row = servers[index]
+        guard !row.isGroup, row.subscriptionID != nil else { return }
+        for group in servers(in: row.subscriptionID) where group.isGroup {
+            guard let rows = memberRows(of: group), rows.contains(where: { $0.id == id }),
+                  let groupIndex = servers.firstIndex(where: { $0.id == group.id })
+            else { continue }
+            servers[groupIndex].lastPing = Ping.fastest(rows.map(\.lastPing))
+        }
     }
 
     public mutating func removeSubscription(_ id: UUID) {
@@ -354,15 +435,18 @@ public struct AppState: Codable, Sendable {
         if selectedServerID == id { selectedServerID = servers.first?.id }
     }
 
+    /// Groups stay on top in any order: they are not one more server to compare.
     public func sorted(_ list: [Server]) -> [Server] {
+        let groups = list.filter(\.isGroup)
+        let rest = list.filter { !$0.isGroup }
         switch settings.sortMode {
         case .none:
             return list
         case .name:
-            return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            return groups + rest.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         case .ping:
             // Stable: servers without a result keep their order at the end.
-            return list.enumerated().sorted { a, b in
+            return groups + rest.enumerated().sorted { a, b in
                 let pa = a.element.lastPing?.sortValue ?? Int.max
                 let pb = b.element.lastPing?.sortValue ?? Int.max
                 return pa == pb ? a.offset < b.offset : pa < pb

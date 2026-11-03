@@ -42,6 +42,7 @@ final class AppModel: ObservableObject {
         }
         try? store.prepareDirectories()
         state = store.loadState()
+        if state.syncAutoGroups() { try? store.save(state) }
     }
 
     var settings: AppSettings { state.settings }
@@ -250,13 +251,14 @@ final class AppModel: ObservableObject {
 
     // MARK: ping
 
-    func ping(_ servers: [Server]) async {
+    func ping(_ rows: [Server]) async {
+        let servers = state.pingTargets(rows)
         guard !pinging, !servers.isEmpty else { return }
         pinging = true
         defer { pinging = false }
         let settings = state.settings
         let onResult: @Sendable (UUID, PingResult?) async -> Void = { id, result in
-            await MainActor.run { self.setPing(result, for: id) }
+            await MainActor.run { self.state.setPing(result, for: id) }
         }
         if settings.pingMode.throughProxy {
             do {
@@ -280,11 +282,6 @@ final class AppModel: ObservableObject {
         pingingSubscription = id
         defer { pingingSubscription = nil }
         await ping(state.servers(in: id))
-    }
-
-    private func setPing(_ result: PingResult?, for id: UUID) {
-        guard let index = state.servers.firstIndex(where: { $0.id == id }) else { return }
-        state.servers[index].lastPing = result
     }
 
     // MARK: rule-sets
