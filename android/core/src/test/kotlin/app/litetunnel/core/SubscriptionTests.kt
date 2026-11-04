@@ -199,6 +199,37 @@ class SubscriptionTests {
     }
 
     @Test
+    fun xrayJsonBehindCommentsOrBase64() {
+        val config = """[{"remarks":"A","outbounds":[{"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"a.example.com","port":443,"users":[{"id":"00000000-0000-0000-0000-000000000000","encryption":"none"}]}]}}]}]"""
+        val commented = "#profile-title: X\r\n#announce: Y\r\n\r\n$config"
+        val encoder = Base64.getEncoder()
+        for (body in listOf(
+            commented,
+            "\uFEFF$commented",
+            encoder.encodeToString(config.toByteArray()),
+            encoder.encodeToString(commented.toByteArray()),
+        )) {
+            assertEquals(listOf("A"), parse(body).servers.map { it.name })
+        }
+    }
+
+    @Test
+    fun noServersSaysWhatCameInstead() {
+        val cases = listOf(
+            " \n".toByteArray() to SubscriptionError.Empty,
+            byteArrayOf(-1, -2, 0) to SubscriptionError.NoServers("пришли двоичные данные"),
+            "<!doctype html><html></html>".toByteArray() to SubscriptionError.NoServers("пришла веб-страница"),
+            """[{"outbounds":[{"tag":"direct","protocol":"freedom"}]}]""".toByteArray() to SubscriptionError.NoServers("пришли настройки без прокси"),
+            "someapp://crypt/AAAA\nsomeapp://crypt/BBBB".toByteArray() to SubscriptionError.NoServers("пришли ссылки someapp://"),
+            "Client not supported".toByteArray() to SubscriptionError.NoServers("сервер ответил «Client not supported»"),
+            "AAAA\nBBBB".toByteArray() to SubscriptionError.NoServers("пришёл текст, 9 байт"),
+        )
+        for ((body, expected) in cases) {
+            assertEquals(expected, assertThrows<SubscriptionError> { SubscriptionParser.parse(body, emptyMap()) })
+        }
+    }
+
+    @Test
     fun applyKeepsIdsSelectionAndPosition() {
         var state = AppState().addManual(listOf(ShareLink.parse("trojan://pw@m.example.com:443#Manual"))).first
         val sub = Subscription(name = "sub", url = "https://s.example.com/x")
@@ -461,5 +492,48 @@ class SubscriptionTests {
             assertEquals(listOf(ProxyProtocol.HYSTERIA2, ProxyProtocol.VLESS), servers.servers.map { it.proto })
         }
         assertTrue(Importer.classify("hello") is ImportItem.Nothing)
+    }
+
+    @Test
+    fun jsonFormatUrl() {
+        val cases = listOf(
+            "https://s.example.com/abc/" to "https://s.example.com/abc/json",
+            "https://s.example.com/abc" to "https://s.example.com/abc/json",
+            "https://s.example.com:8443/a%20b/?k=1" to "https://s.example.com:8443/a%20b/json?k=1",
+        )
+        for ((plain, json) in cases) assertEquals(json, SubscriptionClient.jsonFormatUrl(plain))
+        for (address in listOf("https://s.example.com/abc/json", "https://s.example.com/abc/json/", "https://s.example.com", "https://s.example.com/")) {
+            assertNull(address, SubscriptionClient.jsonFormatUrl(address))
+        }
+    }
+
+    @Test
+    fun blankAnswerAsksForJson() {
+        val asked = ArrayList<String>()
+        val answer = SubscriptionClient.withJsonFallback("https://s.example.com/abc/") { url ->
+            asked += url
+            if (asked.size == 1) throw SubscriptionError.Empty
+            7
+        }
+        assertEquals(7, answer)
+        assertEquals(listOf("https://s.example.com/abc/", "https://s.example.com/abc/json"), asked)
+    }
+
+    @Test
+    fun jsonFallbackKeepsTheErrorWorthTelling() {
+        fun outcome(address: String, vararg answers: SubscriptionError): Pair<SubscriptionError?, Int> {
+            var count = 0
+            return try {
+                SubscriptionClient.withJsonFallback<Int>(address) { throw answers[count++] }
+                null to count
+            } catch (e: SubscriptionError) {
+                e to count
+            }
+        }
+        val plain = "https://s.example.com/abc/"
+        assertEquals(SubscriptionError.Empty to 2, outcome(plain, SubscriptionError.Empty, SubscriptionError.Http(404)))
+        assertEquals(SubscriptionError.DeviceLimit to 2, outcome(plain, SubscriptionError.Empty, SubscriptionError.DeviceLimit))
+        assertEquals("only a blank answer asks again", SubscriptionError.Http(500) to 1, outcome(plain, SubscriptionError.Http(500)))
+        assertEquals("the address already asks for JSON", SubscriptionError.Empty to 1, outcome(plain + "json", SubscriptionError.Empty))
     }
 }

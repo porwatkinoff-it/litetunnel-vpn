@@ -68,6 +68,11 @@ struct SubscriptionView: View {
                     LabeledContent("Серверов", value: "\(model.state.serverCount(in: draft.id))")
                     if current.skippedCount > 0 {
                         LabeledContent("Пропущено строк", value: "\(current.skippedCount)")
+                        if let reasons = current.skippedReasons, !reasons.isEmpty {
+                            Text(reasons.joined(separator: "\n"))
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     if let updated = current.lastUpdated {
                         LabeledContent("Обновлена", value: Format.relative(updated))

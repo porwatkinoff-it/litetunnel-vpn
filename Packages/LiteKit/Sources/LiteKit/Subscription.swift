@@ -27,6 +27,7 @@ public struct SubscriptionResult: Sendable {
 public enum SubscriptionError: Error, LocalizedError, Equatable {
     case http(Int)
     case empty
+    case noServers(String)
     case nothingSupported(String)
     case deviceLimit
     case deviceIDRefused
@@ -34,7 +35,8 @@ public enum SubscriptionError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .http(let code): return "Сервер подписки ответил \(code)"
-        case .empty: return "Подписка пустая"
+        case .empty: return "Подписка без серверов: пустой ответ"
+        case .noServers(let what): return "Подписка без серверов: \(what)"
         case .nothingSupported(let reason): return "В подписке нет поддерживаемых серверов (\(reason))"
         case .deviceLimit: return "Достигнут лимит устройств подписки: отвяжите старое устройство у провайдера"
         case .deviceIDRefused: return "Провайдер не принял ID устройства и не выдал серверы"
@@ -55,22 +57,61 @@ public enum SubscriptionParser {
         result.meta = parseHeaders(headers)
         if result.servers.isEmpty {
             if let first = result.skipped.first { throw SubscriptionError.nothingSupported(first.reason) }
-            throw SubscriptionError.empty
+            throw noServers(in: body)
         }
         return result
     }
 
+    /// What came instead of servers, told by its shape: a body can hold a token,
+    /// so only a short line of plain words is quoted.
+    static func noServers(in body: Data) -> SubscriptionError {
+        guard let decoded = String(data: body, encoding: .utf8) else { return .noServers("пришли двоичные данные") }
+        let text = unwrapped(decoded)
+        if text.isEmpty { return .empty }
+        if text.hasPrefix("<") { return .noServers("пришла веб-страница") }
+        if isJSON(text) { return .noServers("пришли настройки без прокси") }
+        if let range = text.range(of: "(?m)^[A-Za-z][A-Za-z0-9+.-]*://", options: .regularExpression) {
+            return .noServers("пришли ссылки \(text[range])")
+        }
+        if text.count <= 120, text.contains(" "), !text.contains(where: \.isNewline) {
+            return .noServers("сервер ответил «\(text)»")
+        }
+        return .noServers("пришёл текст, \(body.count) байт")
+    }
+
+    static func isJSON(_ text: String) -> Bool { text.hasPrefix("{") || text.hasPrefix("[") }
+
+    /// The body without what panels put around it: `#profile-title: ...` lines
+    /// above JSON, or base64 around all of it.
+    static func unwrapped(_ body: String) -> String {
+        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let uncommented = withoutLeadingComments(text)
+        if isJSON(uncommented) { return uncommented }
+        if !text.contains("://"), let decoded = Base64.decodeString(text) {
+            let inner = unwrapped(decoded)
+            if inner.contains("://") || isJSON(inner) { return inner }
+        }
+        return text
+    }
+
+    static func withoutLeadingComments(_ text: String) -> String {
+        var rest = Substring(text)
+        while rest.hasPrefix("#") || rest.hasPrefix("//") {
+            guard let end = rest.firstIndex(where: \.isNewline) else { return "" }
+            rest = rest[end...].drop(while: \.isWhitespace)
+        }
+        return String(rest)
+    }
+
     public static func parseBody(_ body: Data) -> SubscriptionResult {
         var result = SubscriptionResult(servers: [], skipped: [], meta: SubscriptionMeta(), routingLines: [])
-        guard var text = String(data: body, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty else { return result }
+        guard let decoded = String(data: body, encoding: .utf8) else { return result }
+        let text = unwrapped(decoded)
+        if text.isEmpty { return result }
 
-        if text.hasPrefix("{") || text.hasPrefix("[") {
+        if isJSON(text) {
             parseJSON(text, into: &result)
             return result
-        }
-        if !text.contains("://"), let decoded = Base64.decodeString(text), decoded.contains("://") {
-            text = decoded
         }
         for raw in text.components(separatedBy: .newlines) {
             let line = raw.trimmingCharacters(in: .whitespaces)
@@ -180,6 +221,36 @@ public struct SubscriptionClient: Sendable {
     public init() {}
 
     public func fetch(_ subscription: Subscription) async throws -> SubscriptionResult {
+        try await Self.withJSONFallback(subscription.url) { try await load(subscription, from: $0) }
+    }
+
+    /// Some Remnawave panels answer blank on the plain address and serve the
+    /// servers at `<address>/json` (docs.rs/crate/remnawave). A panel without that
+    /// format answers with an HTTP error: then the blank answer is the news.
+    static func withJSONFallback<T>(_ url: URL, load: (URL) async throws -> T) async throws -> T {
+        do {
+            return try await load(url)
+        } catch SubscriptionError.empty {
+            guard let json = jsonFormatURL(url) else { throw SubscriptionError.empty }
+            do {
+                return try await load(json)
+            } catch SubscriptionError.http {
+                throw SubscriptionError.empty
+            }
+        }
+    }
+
+    /// Nil when the address already asks for JSON or has no path to add it to.
+    static func jsonFormatURL(_ url: URL) -> URL? {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        var path = parts.percentEncodedPath
+        while path.hasSuffix("/") { path.removeLast() }
+        guard !path.isEmpty, !path.hasSuffix("/json") else { return nil }
+        parts.percentEncodedPath = path + "/json"
+        return parts.url
+    }
+
+    private func load(_ subscription: Subscription, from url: URL) async throws -> SubscriptionResult {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
         config.timeoutIntervalForResource = timeout * 2
@@ -188,7 +259,7 @@ public struct SubscriptionClient: Sendable {
         let session = URLSession(configuration: config)
         defer { session.finishTasksAndInvalidate() }
 
-        var request = URLRequest(url: subscription.url)
+        var request = URLRequest(url: url)
         request.setValue(subscription.userAgent ?? Self.defaultUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("*/*", forHTTPHeaderField: "Accept")
         for (name, value) in DeviceInfo.headers { request.setValue(value, forHTTPHeaderField: name) }

@@ -27,7 +27,8 @@ class SubscriptionResult(
 
 sealed class SubscriptionError(message: String) : Exception(message) {
     data class Http(val code: Int) : SubscriptionError("Сервер подписки ответил $code")
-    data object Empty : SubscriptionError("Подписка пустая")
+    data object Empty : SubscriptionError("Подписка без серверов: пустой ответ")
+    data class NoServers(val what: String) : SubscriptionError("Подписка без серверов: $what")
     data class NothingSupported(val reason: String) : SubscriptionError("В подписке нет поддерживаемых серверов ($reason)")
     data object DeviceLimit : SubscriptionError("Достигнут лимит устройств подписки: отвяжите старое устройство у провайдера")
     data object DeviceIdRefused : SubscriptionError("Провайдер не принял ID устройства и не выдал серверы")
@@ -36,6 +37,7 @@ sealed class SubscriptionError(message: String) : Exception(message) {
 object SubscriptionParser {
     /** Splits like Foundation's CharacterSet.newlines. */
     private val newlines = Regex("[\n\u000B\u000C\r\u0085  ]")
+    private val linkScheme = Regex("^[A-Za-z][A-Za-z0-9+.-]*://", RegexOption.MULTILINE)
 
     fun parse(body: ByteArray, headers: Map<String, String>): SubscriptionResult {
         // Device-limit panels answer 200 with a placeholder server and say why
@@ -47,22 +49,60 @@ object SubscriptionParser {
         result.meta = parseHeaders(headers)
         if (result.servers.isEmpty()) {
             result.skipped.firstOrNull()?.let { throw SubscriptionError.NothingSupported(it.reason) }
-            throw SubscriptionError.Empty
+            throw noServers(body)
         }
         return result
     }
 
+    /**
+     * What came instead of servers, told by its shape: a body can hold a token,
+     * so only a short line of plain words is quoted.
+     */
+    private fun noServers(body: ByteArray): SubscriptionError {
+        val text = unwrapped(Base64Text.utf8OrNull(body) ?: return SubscriptionError.NoServers("пришли двоичные данные"))
+        if (text.isEmpty()) return SubscriptionError.Empty
+        if (text.startsWith("<")) return SubscriptionError.NoServers("пришла веб-страница")
+        if (isJson(text)) return SubscriptionError.NoServers("пришли настройки без прокси")
+        linkScheme.find(text)?.let { return SubscriptionError.NoServers("пришли ссылки ${it.value}") }
+        if (text.length <= 120 && ' ' in text && !newlines.containsMatchIn(text)) {
+            return SubscriptionError.NoServers("сервер ответил «$text»")
+        }
+        return SubscriptionError.NoServers("пришёл текст, ${body.size} байт")
+    }
+
+    private fun isJson(text: String) = text.startsWith("{") || text.startsWith("[")
+
+    /**
+     * The body without what panels put around it: `#profile-title: ...` lines
+     * above JSON, or base64 around all of it.
+     */
+    private fun unwrapped(body: String): String {
+        val text = body.removePrefix("\uFEFF").trim()
+        val uncommented = withoutLeadingComments(text)
+        if (isJson(uncommented)) return uncommented
+        if ("://" !in text) {
+            Base64Text.decodeString(text)?.let(::unwrapped)?.takeIf { "://" in it || isJson(it) }?.let { return it }
+        }
+        return text
+    }
+
+    private fun withoutLeadingComments(text: String): String {
+        var rest = text
+        while (rest.startsWith("#") || rest.startsWith("//")) {
+            val end = newlines.find(rest)?.range?.first ?: return ""
+            rest = rest.substring(end).trimStart()
+        }
+        return rest
+    }
+
     fun parseBody(body: ByteArray): SubscriptionResult {
         val result = SubscriptionResult()
-        var text = Base64Text.utf8OrNull(body)?.removePrefix("﻿")?.trim() ?: return result
+        val text = unwrapped(Base64Text.utf8OrNull(body) ?: return result)
         if (text.isEmpty()) return result
 
-        if (text.startsWith("{") || text.startsWith("[")) {
+        if (isJson(text)) {
             parseJson(text, result)
             return result
-        }
-        if ("://" !in text) {
-            Base64Text.decodeString(text)?.takeIf { "://" in it }?.let { text = it }
         }
         for (raw in text.split(newlines)) {
             val line = raw.trim()
@@ -179,16 +219,20 @@ object SubscriptionParser {
 
 /**
  * Fetches a subscription. Blocking: call it off the main thread. One request
- * per refresh, no retries and no cache, so a refresh costs one radio wake-up.
+ * per refresh, a second only after a blank answer, and no cache, so a refresh
+ * costs one radio wake-up.
  */
 class SubscriptionClient(
     /** x-hwid and the other device headers, sent with every request. */
     private val deviceHeaders: Map<String, String>,
     private val timeoutMs: Int = 15_000,
 ) {
-    fun fetch(subscription: Subscription): SubscriptionResult {
+    fun fetch(subscription: Subscription): SubscriptionResult =
+        withJsonFallback(subscription.url) { load(subscription, it) }
+
+    private fun load(subscription: Subscription, url: String): SubscriptionResult {
         val connection = try {
-            URL(subscription.url).openConnection() as HttpURLConnection
+            URL(url).openConnection() as HttpURLConnection
         } catch (e: Exception) {
             throw IOException("Неверный адрес подписки", e)
         }
@@ -215,5 +259,33 @@ class SubscriptionClient(
 
     companion object {
         const val DEFAULT_USER_AGENT = "LiteTunnel/0.1"
+
+        /**
+         * Some Remnawave panels answer blank on the plain address and serve the
+         * servers at `<address>/json` (docs.rs/crate/remnawave). A panel without that
+         * format answers with an HTTP error: then the blank answer is the news.
+         */
+        internal fun <T> withJsonFallback(url: String, load: (String) -> T): T =
+            try {
+                load(url)
+            } catch (blank: SubscriptionError.Empty) {
+                val json = jsonFormatUrl(url) ?: throw blank
+                try {
+                    load(json)
+                } catch (_: SubscriptionError.Http) {
+                    throw blank
+                }
+            }
+
+        /** Null when the address already asks for JSON or has no path to add it to. */
+        internal fun jsonFormatUrl(url: String): String? {
+            val uri = runCatching { URI(url.trim()) }.getOrNull() ?: return null
+            val scheme = uri.scheme ?: return null
+            val authority = uri.rawAuthority ?: return null
+            val path = uri.rawPath.orEmpty().trimEnd('/')
+            if (path.isEmpty() || path.endsWith("/json")) return null
+            val query = uri.rawQuery?.let { "?$it" }.orEmpty()
+            return "$scheme://$authority$path/json$query"
+        }
     }
 }

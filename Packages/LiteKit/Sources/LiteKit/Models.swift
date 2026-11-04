@@ -139,6 +139,8 @@ public struct Subscription: Codable, Identifiable, Hashable, Sendable {
     public var webPageURL: URL?
     public var announce: String?
     public var skippedCount: Int
+    /// Why entries were skipped, without the entries: those hold keys.
+    public var skippedReasons: [String]?
     public init(id: UUID = UUID(), name: String, url: URL) {
         self.id = id
         self.name = name
@@ -318,6 +320,8 @@ public struct AppState: Codable, Sendable {
         sub.lastUpdated = date
         sub.lastError = nil
         sub.skippedCount = result.skipped.count
+        var seenReasons = Set<String>()
+        sub.skippedReasons = Array(result.skipped.map(\.reason).filter { seenReasons.insert($0).inserted }.prefix(5))
         subscriptions[index] = sub
 
         let old = servers.filter { $0.subscriptionID == subscriptionID }

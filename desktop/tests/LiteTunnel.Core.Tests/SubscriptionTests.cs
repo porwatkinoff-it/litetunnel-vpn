@@ -192,6 +192,44 @@ public class SubscriptionTests
     }
 
     [Fact]
+    public void XrayJsonBehindCommentsOrBase64()
+    {
+        const string config = """[{"remarks":"A","outbounds":[{"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"a.example.com","port":443,"users":[{"id":"00000000-0000-0000-0000-000000000000","encryption":"none"}]}]}}]}]""";
+        var commented = "#profile-title: X\r\n#announce: Y\r\n\r\n" + config;
+        foreach (var body in new[]
+        {
+            commented,
+            "\uFEFF" + commented,
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(config)),
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(commented)),
+        })
+        {
+            Assert.Equal(["A"], Parse(body).Servers.Select(s => s.Name));
+        }
+    }
+
+    [Theory]
+    [InlineData("<!doctype html><html></html>", "пришла веб-страница")]
+    [InlineData("""[{"outbounds":[{"tag":"direct","protocol":"freedom"}]}]""", "пришли настройки без прокси")]
+    [InlineData("someapp://crypt/AAAA\nsomeapp://crypt/BBBB", "пришли ссылки someapp://")]
+    [InlineData("Client not supported", "сервер ответил «Client not supported»")]
+    [InlineData("AAAA\nBBBB", "пришёл текст, 9 байт")]
+    public void NoServersSaysWhatCameInstead(string body, string what)
+    {
+        var error = Assert.Throws<SubscriptionException>(() => Parse(body));
+        Assert.Equal(SubscriptionErrorKind.NoServers, error.Kind);
+        Assert.Equal(what, error.Reason);
+    }
+
+    [Fact]
+    public void NoServersTellsBlankAndBinaryApart()
+    {
+        Assert.Equal(SubscriptionErrorKind.Empty, Assert.Throws<SubscriptionException>(() => Parse(" \n")).Kind);
+        var binary = Assert.Throws<SubscriptionException>(() => SubscriptionParser.Parse([0xFF, 0xFE, 0x00], NoHeaders));
+        Assert.Equal("пришли двоичные данные", binary.Reason);
+    }
+
+    [Fact]
     public void ApplyKeepsIdsSelectionAndPosition()
     {
         var state = new AppState().AddManual([ShareLink.Parse("trojan://pw@m.example.com:443#Manual")]).State;
@@ -491,5 +529,47 @@ public class SubscriptionTests
         Assert.True(sub.IsDue(now));
         Assert.False((sub with { LastUpdated = now.AddHours(-11) }).IsDue(now));
         Assert.True((sub with { LastUpdated = now.AddHours(-13) }).IsDue(now));
+    }
+
+    [Theory]
+    [InlineData("https://s.example.com/abc/", "https://s.example.com/abc/json")]
+    [InlineData("https://s.example.com/abc", "https://s.example.com/abc/json")]
+    [InlineData("https://s.example.com:8443/a%20b/?k=1", "https://s.example.com:8443/a%20b/json?k=1")]
+    [InlineData("https://s.example.com/abc/json", null)]
+    [InlineData("https://s.example.com/abc/json/", null)]
+    [InlineData("https://s.example.com", null)]
+    [InlineData("https://s.example.com/", null)]
+    public void JsonFormatUrl(string address, string? json) =>
+        Assert.Equal(json, SubscriptionClient.JsonFormatUrl(address));
+
+    [Fact]
+    public async Task BlankAnswerAsksForJson()
+    {
+        var asked = new List<string>();
+        var answer = await SubscriptionClient.WithJsonFallback("https://s.example.com/abc/", url =>
+        {
+            asked.Add(url);
+            if (asked.Count == 1) throw SubscriptionException.Empty();
+            return Task.FromResult(7);
+        });
+        Assert.Equal(7, answer);
+        Assert.Equal(["https://s.example.com/abc/", "https://s.example.com/abc/json"], asked);
+    }
+
+    [Fact]
+    public async Task JsonFallbackKeepsTheErrorWorthTelling()
+    {
+        static async Task<(SubscriptionErrorKind Kind, int Count)> Outcome(string address, params SubscriptionException[] answers)
+        {
+            var count = 0;
+            var e = await Assert.ThrowsAsync<SubscriptionException>(() =>
+                SubscriptionClient.WithJsonFallback<int>(address, _ => throw answers[count++]));
+            return (e.Kind, count);
+        }
+        const string plain = "https://s.example.com/abc/";
+        Assert.Equal((SubscriptionErrorKind.Empty, 2), await Outcome(plain, SubscriptionException.Empty(), SubscriptionException.Http(404)));
+        Assert.Equal((SubscriptionErrorKind.DeviceLimit, 2), await Outcome(plain, SubscriptionException.Empty(), SubscriptionException.DeviceLimit()));
+        Assert.Equal((SubscriptionErrorKind.Http, 1), await Outcome(plain, SubscriptionException.Http(500)));
+        Assert.Equal((SubscriptionErrorKind.Empty, 1), await Outcome(plain + "json", SubscriptionException.Empty()));
     }
 }

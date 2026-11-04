@@ -26,7 +26,7 @@ public sealed class SubscriptionResult
     public List<string> RoutingLines { get; } = [];
 }
 
-public enum SubscriptionErrorKind { Http, Empty, NothingSupported, DeviceLimit, DeviceIdRefused }
+public enum SubscriptionErrorKind { Http, Empty, NoServers, NothingSupported, DeviceLimit, DeviceIdRefused }
 
 public sealed class SubscriptionException : Exception
 {
@@ -35,7 +35,7 @@ public sealed class SubscriptionException : Exception
     /// <summary>The HTTP status for <see cref="SubscriptionErrorKind.Http"/>.</summary>
     public int Code { get; }
 
-    /// <summary>Why the first entry was skipped, for <see cref="SubscriptionErrorKind.NothingSupported"/>.</summary>
+    /// <summary>Why the first entry was skipped, for <see cref="SubscriptionErrorKind.NothingSupported"/>; what came, for <see cref="SubscriptionErrorKind.NoServers"/>.</summary>
     public string? Reason { get; }
 
     private SubscriptionException(SubscriptionErrorKind kind, string message, int code = 0, string? reason = null) : base(message)
@@ -46,7 +46,8 @@ public sealed class SubscriptionException : Exception
     }
 
     public static SubscriptionException Http(int code) => new(SubscriptionErrorKind.Http, $"Сервер подписки ответил {code}", code: code);
-    public static SubscriptionException Empty() => new(SubscriptionErrorKind.Empty, "Подписка пустая");
+    public static SubscriptionException Empty() => new(SubscriptionErrorKind.Empty, "Подписка без серверов: пустой ответ");
+    public static SubscriptionException NoServers(string what) => new(SubscriptionErrorKind.NoServers, $"Подписка без серверов: {what}", reason: what);
 
     public static SubscriptionException NothingSupported(string reason) =>
         new(SubscriptionErrorKind.NothingSupported, $"В подписке нет поддерживаемых серверов ({reason})", reason: reason);
@@ -64,6 +65,9 @@ public static partial class SubscriptionParser
     [GeneratedRegex("[\n\u000B\u000C\r\u0085\u2028\u2029]")]
     private static partial Regex Newlines();
 
+    [GeneratedRegex("^[A-Za-z][A-Za-z0-9+.-]*://", RegexOptions.Multiline)]
+    private static partial Regex LinkScheme();
+
     public static SubscriptionResult Parse(byte[] body, IReadOnlyDictionary<string, string> headers)
     {
         // Device-limit panels answer 200 with a placeholder server and say why
@@ -76,25 +80,72 @@ public static partial class SubscriptionParser
         if (result.Servers.Count == 0)
         {
             if (result.Skipped.Count > 0) throw SubscriptionException.NothingSupported(result.Skipped[0].Reason);
-            throw SubscriptionException.Empty();
+            throw NoServers(body);
         }
         return result;
+    }
+
+    /// <summary>
+    /// What came instead of servers, told by its shape: a body can hold a token,
+    /// so only a short line of plain words is quoted.
+    /// </summary>
+    private static SubscriptionException NoServers(byte[] body)
+    {
+        if (Base64Text.Utf8OrNull(body) is not { } decoded) return SubscriptionException.NoServers("пришли двоичные данные");
+        var text = Unwrapped(decoded);
+        if (text.Length == 0) return SubscriptionException.Empty();
+        if (text.StartsWith('<')) return SubscriptionException.NoServers("пришла веб-страница");
+        if (IsJson(text)) return SubscriptionException.NoServers("пришли настройки без прокси");
+        var scheme = LinkScheme().Match(text);
+        if (scheme.Success) return SubscriptionException.NoServers($"пришли ссылки {scheme.Value}");
+        if (text.Length <= 120 && text.Contains(' ') && !Newlines().IsMatch(text))
+            return SubscriptionException.NoServers($"сервер ответил «{text}»");
+        return SubscriptionException.NoServers($"пришёл текст, {body.Length} байт");
+    }
+
+    private static bool IsJson(string text) => text.StartsWith('{') || text.StartsWith('[');
+
+    /// <summary>
+    /// The body without what panels put around it: <c>#profile-title: ...</c> lines
+    /// above JSON, or base64 around all of it.
+    /// </summary>
+    private static string Unwrapped(string body)
+    {
+        var text = body.TrimStart('\uFEFF').Trim();
+        var uncommented = WithoutLeadingComments(text);
+        if (IsJson(uncommented)) return uncommented;
+        if (!text.Contains("://", StringComparison.Ordinal) && Base64Text.DecodeString(text) is { } decoded)
+        {
+            var inner = Unwrapped(decoded);
+            if (inner.Contains("://", StringComparison.Ordinal) || IsJson(inner)) return inner;
+        }
+        return text;
+    }
+
+    private static string WithoutLeadingComments(string text)
+    {
+        var rest = text;
+        while (rest.StartsWith('#') || rest.StartsWith("//", StringComparison.Ordinal))
+        {
+            var end = Newlines().Match(rest);
+            if (!end.Success) return "";
+            rest = rest[end.Index..].TrimStart();
+        }
+        return rest;
     }
 
     public static SubscriptionResult ParseBody(byte[] body)
     {
         var result = new SubscriptionResult();
         if (Base64Text.Utf8OrNull(body) is not { } decoded) return result;
-        var text = decoded.TrimStart('﻿').Trim();
+        var text = Unwrapped(decoded);
         if (text.Length == 0) return result;
 
-        if (text.StartsWith('{') || text.StartsWith('['))
+        if (IsJson(text))
         {
             ParseJson(text, result);
             return result;
         }
-        if (!text.Contains("://", StringComparison.Ordinal) && Base64Text.DecodeString(text) is { } whole && whole.Contains("://", StringComparison.Ordinal))
-            text = whole;
         foreach (var raw in Newlines().Split(text))
         {
             var line = raw.Trim();
@@ -225,8 +276,8 @@ public static partial class SubscriptionParser
 }
 
 /// <summary>
-/// Fetches a subscription. One request per refresh, no retries and no cache,
-/// so a refresh costs one wake-up of the network.
+/// Fetches a subscription. One request per refresh, a second only after a blank
+/// answer, and no cache, so a refresh costs one wake-up of the network.
 /// </summary>
 public sealed class SubscriptionClient(IReadOnlyDictionary<string, string> deviceHeaders, TimeSpan? timeout = null)
 {
@@ -245,9 +296,45 @@ public sealed class SubscriptionClient(IReadOnlyDictionary<string, string> devic
 
     private readonly TimeSpan _timeout = timeout ?? TimeSpan.FromSeconds(15);
 
-    public async Task<SubscriptionResult> FetchAsync(Subscription subscription, CancellationToken cancellationToken = default)
+    public Task<SubscriptionResult> FetchAsync(Subscription subscription, CancellationToken cancellationToken = default) =>
+        WithJsonFallback(subscription.Url, url => LoadAsync(subscription, url, cancellationToken));
+
+    /// <summary>
+    /// Some Remnawave panels answer blank on the plain address and serve the
+    /// servers at <c>&lt;address&gt;/json</c> (docs.rs/crate/remnawave). A panel without
+    /// that format answers with an HTTP error: then the blank answer is the news.
+    /// </summary>
+    internal static async Task<T> WithJsonFallback<T>(string url, Func<string, Task<T>> load)
     {
-        if (!Uri.TryCreate(subscription.Url.Trim(), UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        try
+        {
+            return await load(url).ConfigureAwait(false);
+        }
+        catch (SubscriptionException blank) when (blank.Kind == SubscriptionErrorKind.Empty && JsonFormatUrl(url) is not null)
+        {
+            try
+            {
+                return await load(JsonFormatUrl(url)!).ConfigureAwait(false);
+            }
+            catch (SubscriptionException e) when (e.Kind == SubscriptionErrorKind.Http)
+            {
+                throw SubscriptionException.Empty();
+            }
+        }
+    }
+
+    /// <summary>Null when the address already asks for JSON or has no path to add it to.</summary>
+    internal static string? JsonFormatUrl(string url)
+    {
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)) return null;
+        var path = uri.AbsolutePath.TrimEnd('/');
+        if (path.Length == 0 || path.EndsWith("/json", StringComparison.Ordinal)) return null;
+        return $"{uri.GetLeftPart(UriPartial.Authority)}{path}/json{uri.Query}";
+    }
+
+    private async Task<SubscriptionResult> LoadAsync(Subscription subscription, string url, CancellationToken cancellationToken)
+    {
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
             throw new IOException("Неверный адрес подписки");
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.TryAddWithoutValidation("User-Agent", subscription.UserAgent ?? DefaultUserAgent);

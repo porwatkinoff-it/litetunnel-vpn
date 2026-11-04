@@ -171,6 +171,37 @@ final class SubscriptionTests: XCTestCase {
         }
     }
 
+    func testXrayJSONBehindCommentsOrBase64() throws {
+        let config = #"[{"remarks":"A","outbounds":[{"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"a.example.com","port":443,"users":[{"id":"00000000-0000-0000-0000-000000000000","encryption":"none"}]}]}}]}]"#
+        let commented = "#profile-title: X\r\n#announce: Y\r\n\r\n" + config
+        for body in [
+            commented,
+            "\u{FEFF}" + commented,
+            Data(config.utf8).base64EncodedString(),
+            Data(commented.utf8).base64EncodedString(),
+        ] {
+            let result = try SubscriptionParser.parse(body: Data(body.utf8), headers: [:])
+            XCTAssertEqual(result.servers.map(\.name), ["A"])
+        }
+    }
+
+    func testNoServersSaysWhatCameInstead() {
+        let cases: [(Data, SubscriptionError)] = [
+            (Data(" \n".utf8), .empty),
+            (Data([0xFF, 0xFE, 0x00]), .noServers("пришли двоичные данные")),
+            (Data("<!doctype html><html></html>".utf8), .noServers("пришла веб-страница")),
+            (Data(#"[{"outbounds":[{"tag":"direct","protocol":"freedom"}]}]"#.utf8), .noServers("пришли настройки без прокси")),
+            (Data("someapp://crypt/AAAA\nsomeapp://crypt/BBBB".utf8), .noServers("пришли ссылки someapp://")),
+            (Data("Client not supported".utf8), .noServers("сервер ответил «Client not supported»")),
+            (Data("AAAA\nBBBB".utf8), .noServers("пришёл текст, 9 байт")),
+        ]
+        for (body, expected) in cases {
+            XCTAssertThrowsError(try SubscriptionParser.parse(body: body, headers: [:])) { error in
+                XCTAssertEqual(error as? SubscriptionError, expected)
+            }
+        }
+    }
+
     func testApplyKeepsIDsSelectionAndPosition() throws {
         var state = AppState()
         let manual = try ShareLink.parse("trojan://pw@m.example.com:443#Manual")
@@ -408,5 +439,75 @@ final class SubscriptionTests: XCTestCase {
         else { return XCTFail() }
         XCTAssertEqual(servers.map(\.proto), [.hysteria2, .vless])
         guard case .nothing = Importer.classify("hello") else { return XCTFail() }
+    }
+
+    func testJSONFormatURL() {
+        let cases = [
+            ("https://s.example.com/abc/", "https://s.example.com/abc/json"),
+            ("https://s.example.com/abc", "https://s.example.com/abc/json"),
+            ("https://s.example.com:8443/a%20b/?k=1", "https://s.example.com:8443/a%20b/json?k=1"),
+        ]
+        for (plain, json) in cases {
+            XCTAssertEqual(SubscriptionClient.jsonFormatURL(URL(string: plain)!)?.absoluteString, json)
+        }
+        for address in ["https://s.example.com/abc/json", "https://s.example.com/abc/json/", "https://s.example.com", "https://s.example.com/"] {
+            XCTAssertNil(SubscriptionClient.jsonFormatURL(URL(string: address)!), address)
+        }
+    }
+
+    func testBlankAnswerAsksForJSON() async throws {
+        var asked: [String] = []
+        let answer = try await SubscriptionClient.withJSONFallback(URL(string: "https://s.example.com/abc/")!) { url -> Int in
+            asked.append(url.absoluteString)
+            if asked.count == 1 { throw SubscriptionError.empty }
+            return 7
+        }
+        XCTAssertEqual(answer, 7)
+        XCTAssertEqual(asked, ["https://s.example.com/abc/", "https://s.example.com/abc/json"])
+    }
+
+    func testJSONFallbackKeepsTheErrorWorthTelling() async {
+        func outcome(_ address: String, _ answers: [SubscriptionError]) async -> (SubscriptionError?, Int) {
+            var count = 0
+            do {
+                _ = try await SubscriptionClient.withJSONFallback(URL(string: address)!) { _ -> Int in
+                    count += 1
+                    throw answers[count - 1]
+                }
+                return (nil, count)
+            } catch {
+                return (error as? SubscriptionError, count)
+            }
+        }
+        let plain = "https://s.example.com/abc/"
+        var result = await outcome(plain, [.empty, .http(404)])
+        XCTAssertEqual(result.0, .empty)
+        XCTAssertEqual(result.1, 2)
+        result = await outcome(plain, [.empty, .deviceLimit])
+        XCTAssertEqual(result.0, .deviceLimit)
+        result = await outcome(plain, [.http(500)])
+        XCTAssertEqual(result.0, .http(500))
+        XCTAssertEqual(result.1, 1, "only a blank answer asks again")
+        result = await outcome(plain + "json", [.empty])
+        XCTAssertEqual(result.0, .empty)
+        XCTAssertEqual(result.1, 1, "the address already asks for JSON")
+    }
+
+    func testApplyKeepsWhySkippedWithoutTheLines() throws {
+        var state = AppState()
+        let sub = Subscription(name: "sub", url: URL(string: "https://s.example.com/x")!)
+        state.subscriptions.append(sub)
+        let parsed = try SubscriptionParser.parse(body: Data(Self.lines.joined(separator: "\n").utf8), headers: [:])
+        state.apply(parsed, to: sub.id)
+        XCTAssertEqual(state.subscriptions[0].skippedCount, 1)
+        let reason = try XCTUnwrap(state.subscriptions[0].skippedReasons?.first)
+        XCTAssertTrue(reason.contains("XHTTP"))
+        XCTAssertFalse(reason.contains("://"), "the skipped line holds keys")
+    }
+
+    func testSavedSubscriptionWithoutReasonsStillLoads() throws {
+        let saved = try JSONEncoder().encode(Subscription(name: "sub", url: URL(string: "https://s.example.com/x")!))
+        XCTAssertFalse(String(decoding: saved, as: UTF8.self).contains("skippedReasons"))
+        XCTAssertNil(try JSONDecoder().decode(Subscription.self, from: saved).skippedReasons)
     }
 }
