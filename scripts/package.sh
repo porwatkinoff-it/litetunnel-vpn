@@ -64,6 +64,9 @@ codesign -f -s - -o runtime --entitlements "$TMP/app-mac.plist" "$APP"
 ln -s /Applications "$TMP/dmg/Applications"
 DMG="$OUT/LiteTunnel-$VERSION.dmg"
 rm -f "$DMG"
-hdiutil create -quiet -volname LiteTunnel -srcfolder "$TMP/dmg" -format UDZO "$DMG"
+# hdiutil can size an image from -srcfolder too small for the app ("no space
+# left on device", seen on macOS 27.2), so give it the size, with room to spare.
+SIZE=$(( $(du -sm "$TMP/dmg" | cut -f1) * 3 / 2 + 20 ))
+hdiutil create -quiet -volname LiteTunnel -srcfolder "$TMP/dmg" -fs HFS+ -size "${SIZE}m" -format UDZO "$DMG"
 
 ls -lh "$IPA" "$DMG"
