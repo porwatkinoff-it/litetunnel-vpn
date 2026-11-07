@@ -123,8 +123,8 @@
             <TextBlock Classes="body" Text="Способ" />
             <ComboBox Grid.Column="1" ItemsSource="{Binding PingMethod.Items}" SelectedIndex="{Binding PingMethod.Index}" AutomationProperties.Name="Способ пинга" />
           </Grid>
-          <Rectangle Classes="sep" IsVisible="{Binding ShowPingUrl}" />
-          <Grid Classes="row" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowPingUrl}">
+          <Rectangle Classes="sep" />
+          <Grid Classes="row" ColumnDefinitions="Auto,*">
             <TextBlock Classes="body" Text="Адрес проверки" />
             <TextBox Grid.Column="1" Classes="trailing" Text="{Binding PingUrl}" Watermark="{Binding PingUrlPlaceholder}" AutomationProperties.Name="Адрес проверки" />
           </Grid>

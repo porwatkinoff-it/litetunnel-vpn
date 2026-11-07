@@ -114,7 +114,7 @@ fun SettingsScreen(model: AppModel) {
 
             section(header = "Пинг", footer = s.pingMode.footer) {
                 ChoiceRow("Способ", PingMode.entries, s.pingMode, { it.title }) { mode -> set { it.copy(pingMode = mode) } }
-                if (s.pingMode.throughProxy) PingUrlRow(s.pingUrl) { url -> set { it.copy(pingUrl = url) } }
+                PingUrlRow(s.pingUrl) { url -> set { it.copy(pingUrl = url) } }
                 ChoiceRow("Вид", PingDisplay.entries, s.pingDisplay, { it.title }) { display -> set { it.copy(pingDisplay = display) } }
                 SwitchRow("Пинг при открытии", s.pingOnOpen) { on -> set { it.copy(pingOnOpen = on) } }
                 SwitchRow("Пинг после обновления подписки", s.pingOnUpdate) { on -> set { it.copy(pingOnUpdate = on) } }

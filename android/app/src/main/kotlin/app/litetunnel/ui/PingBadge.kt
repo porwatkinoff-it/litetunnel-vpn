@@ -20,6 +20,12 @@ import androidx.compose.ui.unit.dp
 import app.litetunnel.core.PingDisplay
 import app.litetunnel.core.PingResult
 
+/** In place of a ping badge while that server is being measured. */
+@Composable
+fun PingSpinner(modifier: Modifier = Modifier) {
+    Box(modifier.clearAndSetSemantics { contentDescription = "Проверяется" }) { Spinner(16.dp) }
+}
+
 /** A measured ping in the style the settings pick. Screen readers read the text in every style. */
 @Composable
 fun PingBadge(ping: PingResult, display: PingDisplay, modifier: Modifier = Modifier) {

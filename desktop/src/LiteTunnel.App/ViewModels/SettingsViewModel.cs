@@ -134,8 +134,6 @@ public sealed class SettingsViewModel : PageViewModel
 
     public Choice PingView { get; }
 
-    public bool ShowPingUrl => S.PingMode.ThroughProxy();
-
     public string PingUrl
     {
         get => pingUrl;

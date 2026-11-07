@@ -19,6 +19,8 @@ public sealed class AppModel : Observable
     private Banner? banner;
     private bool pinging;
     private Guid? pingingSubscription;
+    private IReadOnlySet<Guid> pingingIds = new HashSet<Guid>();
+    private HashSet<Guid> pendingPings = [];
     private bool updatingRuleSets;
     private bool activating;
     private int bannerId;
@@ -66,6 +68,13 @@ public sealed class AppModel : Observable
     {
         get => pingingSubscription;
         private set => Set(ref pingingSubscription, value);
+    }
+
+    /// <summary>The rows whose ping is being measured: they show a spinner, not the old result.</summary>
+    public IReadOnlySet<Guid> PingingIds
+    {
+        get => pingingIds;
+        private set => Set(ref pingingIds, value);
     }
 
     public bool UpdatingRuleSets
@@ -323,33 +332,39 @@ public sealed class AppModel : Observable
         var servers = State.PingTargets(rows);
         if (Pinging || servers.Count == 0) return;
         Pinging = true;
+        pendingPings = servers.Select(s => s.Id).ToHashSet();
+        PingingIds = State.RowsShowing(pendingPings);
         try
         {
             var settings = Settings;
             void OnResult(Guid id, PingResult? result) => Dispatcher.UIThread.Post(() => SetPing(id, result));
             // While the tunnel is up, probes go around it, not through it.
             var tunnel = Connection.RunningMode == ConnectionMode.Tun ? new PhysicalNetwork(ConfigBuilder.TunInterfaceName) : null;
-            if (settings.PingMode.ThroughProxy())
+            // Every mode checks the server through itself; TCP and ICMP then time it directly.
+            IPinger? direct = settings.PingMode switch
             {
-                var probe = new ProxyProbe(Connection.SingBox, Path.Combine(Store.WorkDirectory, "probe"));
-                if (await Task.Run(() => probe.MeasureAllAsync(servers, settings, OnResult, tunnel?.InterfaceName)) is { } error)
-                {
-                    Show($"Пинг через сервер не запустился: {error}. Показан TCP.", error: true);
-                    await Task.Run(() => Ping.MeasureAllAsync(servers, tunnel is null ? SocketPinger.Default : new SocketPinger(tunnel), OnResult));
-                }
-            }
-            else
-            {
-                IPinger pinger = settings.PingMode == PingMode.Icmp
-                    ? new IcmpPinger(tunnel ?? IProbeNetwork.Default)
-                    : tunnel is null ? SocketPinger.Default : new SocketPinger(tunnel);
-                await Task.Run(() => Ping.MeasureAllAsync(servers, pinger, OnResult));
-            }
+                PingMode.Tcp => tunnel is null ? SocketPinger.Default : new SocketPinger(tunnel),
+                PingMode.Icmp => new IcmpPinger(tunnel ?? IProbeNetwork.Default),
+                _ => null,
+            };
+            var probe = new ProxyProbe(Connection.SingBox, Path.Combine(Store.WorkDirectory, "probe"));
+            var error = await Task.Run(() => probe.MeasureAllAsync(servers, settings, OnResult, direct, tunnel?.InterfaceName));
             // Results posted from the workers arrive before this continuation.
-            await Dispatcher.UIThread.InvokeAsync(Persist, DispatcherPriority.Background);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (error is not null)
+                {
+                    Show($"Не удалось проверить серверы: {error}", error: true);
+                    // An old time would say the server works; it was not checked.
+                    foreach (var id in pendingPings.ToList()) SetPing(id, null);
+                }
+                Persist();
+            }, DispatcherPriority.Background);
         }
         finally
         {
+            pendingPings = [];
+            PingingIds = new HashSet<Guid>();
             Pinging = false;
         }
     }
@@ -366,6 +381,7 @@ public sealed class AppModel : Observable
 
     private void SetPing(Guid id, PingResult? result)
     {
+        if (pendingPings.Remove(id)) PingingIds = State.RowsShowing(pendingPings);
         if (State.Servers.All(s => s.Id != id)) return;
         State = State.SettingPing(result, id);
         StateChanged?.Invoke();

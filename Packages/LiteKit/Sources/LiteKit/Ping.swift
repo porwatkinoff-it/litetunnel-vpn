@@ -7,8 +7,9 @@ import Network
 /// TCP servers get a TCP handshake. Hysteria2 and TUIC run over QUIC, so they
 /// get a QUIC handshake instead; with salamander obfs the server does not
 /// answer plain QUIC, and the result is nil (not measurable). ICMP sends one
-/// echo request. The proxy modes need the core: the app runs one for the
-/// measurement and times `request(through:)` against it.
+/// echo request. Through the server needs the core: the app runs one for
+/// the measurement, times `request(through:)` against it and then runs
+/// `check(through:)`.
 public enum Ping {
     public static func measure(_ server: Server, mode: PingMode = .tcp, timeout: TimeInterval = 3) async -> PingResult? {
         let members = server.members
@@ -101,21 +102,18 @@ public enum Ping {
 
     // MARK: through the proxy
 
+    /// What the check downloads through each server: the start of a large
+    /// file on Google's download servers, asked for by range. Some networks
+    /// let a connection through, then stall it after about 16 KB. A server
+    /// behind one answers a short request in time but cannot load a page.
+    public static let checkURL = URL(string: "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb")!
+    public static let checkBytes = 64 * 1024
+
     /// Times one request to `url` through the HTTP proxy on 127.0.0.1:`port`,
-    /// up to the response headers. Nil when it fails or the server answers
-    /// with an error.
+    /// up to the response headers. Nil when it fails or the answer is not the
+    /// one the address gives (see `passes`).
     public static func request(_ url: URL, through port: Int, head: Bool, timeout: TimeInterval = 5) async -> Int? {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.connectionProxyDictionary = [
-            "HTTPEnable": true, "HTTPProxy": "127.0.0.1", "HTTPPort": port,
-            "HTTPSEnable": true, "HTTPSProxy": "127.0.0.1", "HTTPSPort": port,
-        ]
-        configuration.timeoutIntervalForRequest = timeout
-        configuration.timeoutIntervalForResource = timeout
-        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        configuration.httpMaximumConnectionsPerHost = 1
-        configuration.waitsForConnectivity = false
-        let session = URLSession(configuration: configuration)
+        let session = proxySession(port, idle: timeout, total: timeout)
         defer { session.invalidateAndCancel() }
 
         var request = URLRequest(url: url)
@@ -126,7 +124,58 @@ public enum Ping {
         else { return nil }
         let ms = milliseconds(since: start)
         bytes.task.cancel()
-        return (200..<400).contains(status) ? ms : nil
+        return passes(status, from: url) ? ms : nil
+    }
+
+    /// Whether a status is the test address's real answer. A generate_204
+    /// address answers 204 and nothing else, so a stub page or a login page
+    /// on the way fails; any other address passes with 200 to 399.
+    public static func passes(_ status: Int, from url: URL) -> Bool {
+        url.path.hasSuffix("generate_204") ? status == 204 : (200..<400).contains(status)
+    }
+
+    /// Downloads `checkBytes` of `url` through the proxy on 127.0.0.1:`port`.
+    /// True once all of them are in. A connection that stalls for `idle`
+    /// seconds, or takes longer than `total`, fails.
+    public static func check(through port: Int, url: URL = checkURL,
+                             idle: TimeInterval = 5, total: TimeInterval = 8) async -> Bool {
+        let session = proxySession(port, idle: idle, total: total)
+        defer { session.invalidateAndCancel() }
+
+        var request = URLRequest(url: url)
+        request.setValue("bytes=0-\(checkBytes - 1)", forHTTPHeaderField: "Range")
+        guard let (bytes, response) = try? await session.bytes(for: request),
+              let status = (response as? HTTPURLResponse)?.statusCode
+        else { return false }
+        defer { bytes.task.cancel() }
+        guard status == 200 || status == 206 else { return false }
+        // Counted, not read whole: a server that ignores the range does not
+        // send the whole file.
+        var count = 0
+        do {
+            for try await _ in bytes {
+                count += 1
+                if count == checkBytes { return true }
+            }
+        } catch {
+            return false
+        }
+        return false
+    }
+
+    private static func proxySession(_ port: Int, idle: TimeInterval, total: TimeInterval) -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = [
+            "HTTPEnable": true, "HTTPProxy": "127.0.0.1", "HTTPPort": port,
+            "HTTPSEnable": true, "HTTPSProxy": "127.0.0.1", "HTTPSPort": port,
+        ]
+        configuration.timeoutIntervalForRequest = idle
+        configuration.timeoutIntervalForResource = total
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        configuration.urlCache = nil
+        configuration.httpMaximumConnectionsPerHost = 1
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
     }
 
     /// What a proxied request time shows as in `mode`.

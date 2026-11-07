@@ -15,6 +15,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var pinging = false
     /// The subscription whose header ping button started the current ping.
     @Published private(set) var pingingSubscription: UUID?
+    /// The rows being measured: they show a spinner, not their last result.
+    @Published private(set) var pingingIDs: Set<UUID> = []
+    /// The servers being measured whose results are not in yet.
+    private var pendingPings: Set<UUID> = []
     @Published private(set) var updatingRuleSets = false
     @Published var banner: Banner?
 
@@ -255,20 +259,26 @@ final class AppModel: ObservableObject {
         let servers = state.pingTargets(rows)
         guard !pinging, !servers.isEmpty else { return }
         pinging = true
-        defer { pinging = false }
-        let settings = state.settings
-        let onResult: @Sendable (UUID, PingResult?) async -> Void = { id, result in
-            await MainActor.run { self.state.setPing(result, for: id) }
+        pendingPings = Set(servers.map(\.id))
+        pingingIDs = state.rowsShowing(pendingPings)
+        defer {
+            pinging = false
+            pendingPings = []
+            pingingIDs = []
         }
-        if settings.pingMode.throughProxy {
-            do {
-                try await ProxyProbe.measure(servers, settings: settings, store: store, onResult: onResult)
-            } catch {
-                show("Пинг через сервер не запустился: \(error.localizedDescription). Показан TCP.", error: true)
-                await Ping.measureAll(servers, mode: .tcp, onResult: onResult)
+        let onResult: @Sendable (UUID, PingResult?) async -> Void = { id, result in
+            await MainActor.run {
+                self.state.setPing(result, for: id)
+                self.pendingPings.remove(id)
+                self.pingingIDs = self.state.rowsShowing(self.pendingPings)
             }
-        } else {
-            await Ping.measureAll(servers, mode: settings.pingMode, onResult: onResult)
+        }
+        do {
+            try await ProxyProbe.measure(servers, settings: state.settings, store: store, onResult: onResult)
+        } catch {
+            show("Не удалось проверить серверы: \(error.localizedDescription)", error: true)
+            // Not checked, so no time: an old one would pass for a new one.
+            for id in pendingPings { state.setPing(nil, for: id) }
         }
         persist()
     }

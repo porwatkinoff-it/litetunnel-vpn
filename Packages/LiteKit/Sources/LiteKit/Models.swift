@@ -192,8 +192,9 @@ public enum SortMode: String, Codable, Sendable, CaseIterable {
     case none, ping, name
 }
 
-/// How a ping is measured. The first three send an HTTP request through the
-/// server itself, so a server that answers but does not pass traffic fails.
+/// What time a ping shows. Every mode first checks the server through
+/// itself: a request to the test address and a 64 KB download. A server
+/// that fails either shows "no connection", so a time means it works.
 public enum PingMode: String, Codable, Sendable, CaseIterable {
     /// A GET through the server, its time divided by 3.3 so it reads like a
     /// plain ping rather than a full proxied round trip.
@@ -205,6 +206,9 @@ public enum PingMode: String, Codable, Sendable, CaseIterable {
     /// An ICMP echo to the server's address.
     case icmp
 
+    /// The time is the request's through the server. TCP and ICMP time the
+    /// server directly, and fall back to the request's (as `real`) when it
+    /// does not answer them.
     public var throughProxy: Bool { self == .real || self == .proxyGet || self == .proxyHead }
 }
 
@@ -407,6 +411,18 @@ public struct AppState: Codable, Sendable {
         for server in list {
             for target in memberRows(of: server) ?? [server] where seen.insert(target.id).inserted {
                 result.append(target)
+            }
+        }
+        return result
+    }
+
+    /// These rows and the groups built from them: the rows that show their pings.
+    public func rowsShowing(_ ids: Set<UUID>) -> Set<UUID> {
+        guard !ids.isEmpty else { return [] }
+        var result = ids
+        for group in servers where group.isGroup && !ids.contains(group.id) {
+            if let rows = memberRows(of: group), rows.contains(where: { ids.contains($0.id) }) {
+                result.insert(group.id)
             }
         }
         return result

@@ -233,4 +233,171 @@ public class PingTests
         listener.Stop();
         Assert.Null(await Ping.RequestAsync(url, closed, head: false, timeoutMs: 1000));
     }
+
+    // MARK: the check through a server
+
+    private static readonly Uri File = new("http://check.invalid/file.bin");
+
+    [Fact]
+    public async Task Generate204NeedsA204()
+    {
+        var url = new Uri("http://check.invalid/generate_204");
+        using (var stub = new FakeProxy(_ => new(200, 2)))
+            Assert.Null(await Ping.RequestAsync(url, stub.Port, head: false, timeoutMs: 3000));
+        using var real = new FakeProxy(_ => new(204, 0));
+        Assert.True(await Ping.RequestAsync(url, real.Port, head: false, timeoutMs: 3000) is >= 1);
+    }
+
+    [Fact]
+    public void OtherAddressesPassWith200To399()
+    {
+        var url = new Uri("https://example.com/");
+        Assert.True(Ping.Passes(200, url));
+        Assert.True(Ping.Passes(302, url));
+        Assert.False(Ping.Passes(404, url));
+        Assert.False(Ping.Passes(500, url));
+        var generate = new Uri("https://www.gstatic.com/generate_204");
+        Assert.True(Ping.Passes(204, generate));
+        Assert.False(Ping.Passes(200, generate));
+        Assert.False(Ping.Passes(302, generate));
+    }
+
+    [Fact]
+    public async Task CheckPassesOnTheWholeDownload()
+    {
+        string? head = null;
+        using var proxy = new FakeProxy(h =>
+        {
+            head = h;
+            return new(206, Ping.CheckBytes);
+        });
+        Assert.True(await Ping.CheckAsync(proxy.Port, File, idleMs: 1000, totalMs: 3000));
+        Assert.Contains($"range: bytes=0-{Ping.CheckBytes - 1}", head?.ToLowerInvariant());
+    }
+
+    [Fact]
+    public async Task CheckFailsWhenTheConnectionStalls()
+    {
+        // About what some networks let through before they freeze a connection.
+        using var proxy = new FakeProxy(_ => new(200, 16 * 1024, Length: Ping.CheckBytes, KeepOpen: true));
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(await Ping.CheckAsync(proxy.Port, File, idleMs: 1000, totalMs: 3000));
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task CheckEndsAtItsTotalTime()
+    {
+        // Never idle for long, but far too slow to finish.
+        using var proxy = new FakeProxy(_ => new(200, Ping.CheckBytes, Trickle: true));
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(await Ping.CheckAsync(proxy.Port, File, idleMs: 1000, totalMs: 1500));
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(4));
+    }
+
+    [Fact]
+    public async Task CheckFailsOnAnErrorPage()
+    {
+        using var proxy = new FakeProxy(_ => new(403, Ping.CheckBytes));
+        Assert.False(await Ping.CheckAsync(proxy.Port, File, idleMs: 1000, totalMs: 3000));
+    }
+
+    [Fact]
+    public async Task CheckStopsWhenTheRangeIsIgnored()
+    {
+        using var proxy = new FakeProxy(_ => new(200, 4 * Ping.CheckBytes));
+        Assert.True(await Ping.CheckAsync(proxy.Port, File, idleMs: 1000, totalMs: 3000));
+    }
+
+    [Fact]
+    public async Task ATimeMeansTheServerPassedTheCheck()
+    {
+        var url = new Uri("http://check.invalid/generate_204");
+        var server = Server("trojan://pw@a.example.com:443#a");
+        using var working = new FakeProxy(h => h.Contains("generate_204") ? new(204, 0) : new(206, Ping.CheckBytes));
+        using var stalling = new FakeProxy(h => h.Contains("generate_204") ? new(204, 0) : new(200, 1024, Length: Ping.CheckBytes, KeepOpen: true));
+
+        Assert.IsType<PingMs>(await Ping.ThroughServerAsync(server, working.Port, url, PingMode.Real, null, File, checkIdleMs: 1000));
+        Assert.Equal(PingResult.Failed, await Ping.ThroughServerAsync(server, stalling.Port, url, PingMode.Real, null, File, checkIdleMs: 1000));
+
+        // TCP and ICMP show their own time, but only for a server that works.
+        var direct = new FakePinger(_ => PingResult.Ms(42));
+        Assert.Equal(PingResult.Ms(42), await Ping.ThroughServerAsync(server, working.Port, url, PingMode.Tcp, direct, File, checkIdleMs: 1000));
+        Assert.Equal(PingResult.Failed, await Ping.ThroughServerAsync(server, stalling.Port, url, PingMode.Icmp, direct, File, checkIdleMs: 1000));
+        var silent = new FakePinger(_ => PingResult.Failed);
+        Assert.IsType<PingMs>(await Ping.ThroughServerAsync(server, working.Port, url, PingMode.Icmp, silent, File, checkIdleMs: 1000));
+    }
+
+    /// <summary>
+    /// An HTTP proxy on loopback that answers every request itself, the way a
+    /// broken server or a network on the way might, until disposed.
+    /// </summary>
+    private sealed class FakeProxy : IDisposable
+    {
+        /// <param name="Length">The Content-Length sent, when it is not the body's.</param>
+        /// <param name="KeepOpen">Leaves the connection open after the body, as a stalled one.</param>
+        /// <param name="Trickle">Sends the body 1 KB at a time, 200 ms apart.</param>
+        public sealed record Reply(int Status, int Body, int? Length = null, bool KeepOpen = false, bool Trickle = false);
+
+        private readonly TcpListener listener = new(IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource stop = new();
+        private readonly List<TcpClient> clients = [];
+
+        public FakeProxy(Func<string, Reply> answer)
+        {
+            listener.Start();
+            Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            _ = Task.Run(async () =>
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    TcpClient client;
+                    try
+                    {
+                        client = await listener.AcceptTcpClientAsync(stop.Token);
+                    }
+                    catch (Exception e) when (e is OperationCanceledException or SocketException or ObjectDisposedException)
+                    {
+                        return;
+                    }
+                    lock (clients) clients.Add(client);
+                    _ = ServeAsync(client, answer);
+                }
+            });
+        }
+
+        public int Port { get; }
+
+        private async Task ServeAsync(TcpClient client, Func<string, Reply> answer)
+        {
+            try
+            {
+                var stream = client.GetStream();
+                var head = new StringBuilder();
+                using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
+                for (string? line; !string.IsNullOrEmpty(line = await reader.ReadLineAsync(stop.Token));) head.Append(line).Append('\n');
+                var reply = answer(head.ToString());
+                var status = $"HTTP/1.1 {reply.Status} X\r\nContent-Length: {reply.Length ?? reply.Body}\r\nConnection: close\r\n\r\n";
+                await stream.WriteAsync(Encoding.ASCII.GetBytes(status), stop.Token);
+                var body = new byte[reply.Body];
+                if (!reply.Trickle) await stream.WriteAsync(body, stop.Token);
+                for (int at = 0; reply.Trickle && at < body.Length; at += 1024)
+                {
+                    await stream.WriteAsync(body.AsMemory(at, Math.Min(1024, body.Length - at)), stop.Token);
+                    await Task.Delay(200, stop.Token);
+                }
+                if (!reply.KeepOpen) client.Dispose();
+            }
+            catch (Exception e) when (e is IOException or OperationCanceledException or ObjectDisposedException or SocketException)
+            {
+            }
+        }
+
+        public void Dispose()
+        {
+            stop.Cancel();
+            listener.Stop();
+            lock (clients) foreach (var client in clients) client.Dispose();
+        }
+    }
 }

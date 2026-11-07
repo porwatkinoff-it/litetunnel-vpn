@@ -167,8 +167,9 @@ enum class LogLevel(val raw: String) { ERROR("error"), WARN("warn"), INFO("info"
 enum class SortMode(val raw: String) { NONE("none"), PING("ping"), NAME("name") }
 
 /**
- * How a ping is measured. The first three send an HTTP request through the
- * server itself, so a server that answers but does not pass traffic fails.
+ * What time a ping shows. Every mode first checks the server through
+ * itself: a request to the test address and a 64 KB download. A server that
+ * fails either shows "no connection", so a time means it works.
  */
 enum class PingMode(val raw: String) {
     /**
@@ -185,6 +186,11 @@ enum class PingMode(val raw: String) {
     /** An ICMP echo to the server's address. */
     ICMP("icmp");
 
+    /**
+     * The time is the request's through the server. TCP and ICMP time the
+     * server directly, and fall back to the request's (as REAL) when it does
+     * not answer them.
+     */
     val throughProxy: Boolean get() = this == REAL || this == PROXY_GET || this == PROXY_HEAD
 }
 
@@ -363,6 +369,17 @@ data class AppState(
             for (target in memberRows(server) ?: listOf(server)) {
                 if (seen.add(target.id)) result.add(target)
             }
+        }
+        return result
+    }
+
+    /** These rows and the groups built from them: the rows that show their pings. */
+    fun rowsShowing(ids: Set<UUID>): Set<UUID> {
+        if (ids.isEmpty()) return emptySet()
+        val result = HashSet(ids)
+        for (group in servers) {
+            if (!group.isGroup || group.id in ids) continue
+            if (memberRows(group)?.any { it.id in ids } == true) result.add(group.id)
         }
         return result
     }

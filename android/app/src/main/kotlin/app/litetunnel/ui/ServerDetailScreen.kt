@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -51,7 +52,14 @@ fun ServerDetailScreen(model: AppModel, id: UUID) {
                     if (server.detail.isNotEmpty()) ValueRow("Транспорт", server.detail)
                 }
                 val ping = server.lastPing
-                ValueRow("Пинг", ping?.label ?: "—", ping?.color ?: Lite.colors.secondary)
+                if (server.id in model.pingingIds) {
+                    Row(Modifier.row(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Пинг", Modifier.weight(1f))
+                        PingSpinner()
+                    }
+                } else {
+                    ValueRow("Пинг", ping?.label ?: "—", ping?.color ?: Lite.colors.secondary)
+                }
                 subscription?.let { ValueRow("Подписка", it.name) }
             }
 

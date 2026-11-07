@@ -3,9 +3,9 @@ import Libbox
 import LiteKit
 import os
 
-/// Pings servers through themselves, for the proxy ping modes: a request to
-/// the test address through each server shows whether it passes traffic, not
-/// only whether it answers.
+/// Checks servers through themselves, in every ping mode: a request to the
+/// test address and a 64 KB download go through each server. Only a server
+/// that passes both gets a time, so a time means the server works.
 ///
 /// A second core runs in the app for the measurement, with one local proxy
 /// per server, and closes right after. Its sockets are bound outside the
@@ -15,7 +15,8 @@ enum ProxyProbe {
     static let log = Logger(subsystem: "LiteTunnel", category: "ping")
 
     /// Calls `onResult` for each server as its result comes in; a group's
-    /// once all its members are done. Throws when the core does not start.
+    /// once all its members are done. A link the core cannot run fails on
+    /// its own. Throws when the core does not start for the rest either.
     static func measure(_ servers: [Server], settings: AppSettings, store: SharedStore,
                         onResult: @escaping @Sendable (UUID, PingResult?) async -> Void) async throws {
         let mode = settings.pingMode
@@ -30,16 +31,44 @@ enum ProxyProbe {
             counts[server.id] = max(1, members.count)
         }
         guard !targets.isEmpty else { return }
-
-        let core = try await Core.start(targets.map(\.server), settings: settings, store: store)
         let results = Results(counts)
+
+        let core: Core
+        do {
+            core = try await Core.start(targets.map(\.server), settings: settings, store: store)
+        } catch {
+            // One link the core cannot run stops the whole config.
+            let broken = await Core.broken(targets.map(\.server), settings: settings, store: store)
+            guard !broken.isEmpty else { throw error }
+            log.error("probe: \(broken.count, privacy: .public) links the core cannot run")
+            for index in broken.sorted() {
+                if let done = await results.add(.failed, for: targets[index].owner) {
+                    await onResult(targets[index].owner, done)
+                }
+            }
+            targets = targets.indices.filter { !broken.contains($0) }.map { targets[$0] }
+            guard !targets.isEmpty else { return }
+            core = try await Core.start(targets.map(\.server), settings: settings, store: store)
+        }
         await Ping.forEach(Array(zip(targets, core.ports)), concurrency: 8) { target, port in
-            let ms = await Ping.request(url, through: port, head: mode == .proxyHead)
-            if let done = await results.add(Ping.result(ms, mode: mode), for: target.owner) {
+            let result = await measure(target.server, through: port, url: url, mode: mode)
+            if let done = await results.add(result, for: target.owner) {
                 await onResult(target.owner, done)
             }
         }
         await core.stop()
+    }
+
+    /// One server: the request and the download through it, then its time.
+    private static func measure(_ server: Server, through port: Int, url: URL, mode: PingMode) async -> PingResult {
+        guard let ms = await Ping.request(url, through: port, head: mode == .proxyHead),
+              await Ping.check(through: port)
+        else { return .failed }
+        if mode.throughProxy { return Ping.result(ms, mode: mode) }
+        if case .ms(let own)? = await Ping.measure(server, mode: mode) { return .ms(own) }
+        // It works but does not answer TCP or ICMP: the request's time, read
+        // like a ping.
+        return Ping.result(ms, mode: .real)
     }
 
     /// The address from settings when it is a web one, else the default.
@@ -76,6 +105,28 @@ enum ProxyProbe {
         let ports: [Int]
         private let server: LibboxCommandServer
         private let platform: PlatformInterface
+
+        /// The indices of the servers the core cannot run, each checked
+        /// alone. None when a config without servers fails as well: then
+        /// the cause is not a link.
+        static func broken(_ servers: [Server], settings: AppSettings, store: SharedStore) async -> Set<Int> {
+            await withCheckedContinuation { continuation in
+                queue.async {
+                    continuation.resume(returning: findBroken(servers, settings: settings, store: store))
+                }
+            }
+        }
+
+        private static func findBroken(_ servers: [Server], settings: AppSettings, store: SharedStore) -> Set<Int> {
+            guard (try? CoreSetup.ensure(store)) != nil, let port = try? CoreSetup.freePorts(1).first else { return [] }
+            func runs(_ list: [Server]) -> Bool {
+                let config = ConfigBuilder.probe(list, ports: list.map { _ in port }, settings: settings).jsonString()
+                var error: NSError?
+                return LibboxCheckConfig(config, &error)
+            }
+            guard runs([]) else { return [] }
+            return Set(servers.indices.filter { !runs([servers[$0]]) })
+        }
 
         static func start(_ servers: [Server], settings: AppSettings, store: SharedStore) async throws -> Core {
             try await withCheckedThrowingContinuation { continuation in

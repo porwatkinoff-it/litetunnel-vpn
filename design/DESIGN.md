@@ -141,6 +141,12 @@ and lists its servers on the details screen.
 Colour by milliseconds: under 150 connected, under 400 busy, otherwise or
 failed danger. Text: «87 мс», failed «нет связи». Not yet measured: nothing.
 
+While a server is being checked, a small spinner (secondary) stands in place of
+its badge, read «Проверяется» by screen readers; the old number is hidden, so
+every number on screen is from the last finished check. A group row spins
+while any of its servers is being checked. The details screen does the same on
+its ping line.
+
 | setting «Вид» | shows |
 | --- | --- |
 | Цифры (default) | the text, caption, tabular digits |
@@ -162,8 +168,8 @@ Sections in this order, with these labels:
 4. **Энергосбережение**: Умный сон.
 5. **Список серверов**: Сортировка (Как в подписке / По пингу / По имени).
    Groups stay on top when sorting by ping or name.
-6. **Пинг**: Способ · Адрес проверки (proxy modes only) · Вид · Пинг при
-   открытии · Пинг после обновления подписки. Footer explains the chosen way.
+6. **Пинг**: Способ · Адрес проверки · Вид · Пинг при открытии · Пинг после
+   обновления подписки. Footer explains the check, then the chosen way.
 7. **Дополнительно**: Определять сайт (sniffing) · Сетевой стек · MTU ·
    Журнал · Открыть журнал ›.
 8. **О приложении**: Версия · Ядро sing-box (GPLv3) link.
@@ -172,25 +178,46 @@ Footers are written as on iOS (`App/Shared/Views/SettingsView.swift`).
 
 ## Ping
 
-| «Способ» | what it does | shows |
-| --- | --- | --- |
-| Реальный (default) | GET to the test address through the server | time ÷ 3.3, rounded, at least 1 |
-| Через сервер, GET | the same | the full time |
-| Через сервер, HEAD | HEAD instead of GET | the full time |
-| TCP | TCP handshake to the server (QUIC for Hysteria2 / TUIC) | the time |
-| ICMP | one echo request | the time |
+A number means the server works. Every way checks each server through the
+server itself, in two steps, and a server that fails either shows «нет связи»:
+
+1. **Request** to the test address (GET, or HEAD for «Через сервер, HEAD»),
+   timed up to the response headers; 5 s timeout. An address whose path ends
+   in `generate_204` must answer exactly 204: a page with 200 there is a stub
+   or a captive portal, not the internet. Any other address passes with
+   200–399.
+2. **Check download**: 64 KB of
+   `https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb`
+   (`Range: bytes=0-65535`, no compression). Status 200 or 206 and all 65 536
+   bytes must arrive; 5 s without data or 8 s in all fails. This catches
+   servers whose connections freeze after the first kilobytes, which a short
+   request does not.
+
+| «Способ» | shows for a server that passed |
+| --- | --- |
+| Реальный (default) | request time ÷ 3.3, rounded, at least 1 |
+| Через сервер, GET | the full request time |
+| Через сервер, HEAD | the full request time |
+| TCP | TCP handshake to the server (QUIC for Hysteria2 / TUIC); request time ÷ 3.3 where that cannot be measured |
+| ICMP | one echo request; request time ÷ 3.3 when the server does not answer it |
 
 - Test address: `http://www.gstatic.com/generate_204` by default; any http or
-  https address the user enters; anything else falls back to the default.
-- A request counts as passed with status 200–399, timed up to the response
-  headers; 5 s timeout. A group (Авто-выбор) shows its fastest member. A group
-  whose servers are all rows of its subscription is measured through those
-  rows, so no server is tested twice.
-- The proxy modes start a short-lived second core with one local mixed
-  inbound per server, routed inbound → that server, and close it when done.
-  Its sockets go around the running VPN. If it does not start, show «Пинг
-  через сервер не запустился: … Показан TCP.» and measure TCP.
-- At most 8 at a time. Results appear as they come in.
+  https address the user enters; anything else falls back to the default. The
+  field shows in every way.
+- A group (Авто-выбор) shows its fastest member. A group whose servers are all
+  rows of its subscription is measured through those rows, so no server is
+  tested twice.
+- The check runs in a short-lived second core with one local mixed inbound per
+  server, routed inbound → that server, closed when done. Its sockets go
+  around the running VPN. Its config is UTF-8 without a byte order mark.
+- If that core does not start, check a config without servers first: if even
+  that fails, show «Не удалось проверить серверы: …», clear the pending
+  servers' numbers and stop. Otherwise check each server alone; the ones the
+  core refuses get «нет связи», and the core starts again with the rest.
+  There is no fallback to a plain TCP handshake: it shows a time for servers
+  that pass no traffic.
+- At most 8 at a time. Results appear as they come in; until then the row
+  shows the spinner from «Ping badge».
 - «Пинг после обновления подписки» pings that subscription right after it
   updates (not in background refresh, and not when «Пинг при открытии» is
   about to ping everything anyway).

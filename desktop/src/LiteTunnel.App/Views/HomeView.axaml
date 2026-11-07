@@ -149,7 +149,11 @@
                                       ToolTip.Tip="Подробнее" AutomationProperties.Name="Подробнее">
                                 <c:Icon Data="{StaticResource Icon.info}" Size="18" />
                               </Button>
-                              <c:PingBadge DockPanel.Dock="Right" Ping="{Binding Ping}" Display="{Binding Display}" Margin="8,0,0,0" />
+                              <Panel DockPanel.Dock="Right" Margin="8,0,0,0">
+                                <c:PingBadge Ping="{Binding Ping}" Display="{Binding Display}" IsVisible="{Binding ShowPing}" />
+                                <Path Classes="spinner" IsVisible="{Binding IsPinging}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                      ToolTip.Tip="Проверяется" AutomationProperties.Name="Проверяется" />
+                              </Panel>
                               <StackPanel VerticalAlignment="Center">
                                 <TextBlock Classes="rowTitle" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
                                 <TextBlock Classes="rowDetail secondary" Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis" />

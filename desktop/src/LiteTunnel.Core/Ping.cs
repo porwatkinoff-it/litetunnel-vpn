@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 
@@ -121,25 +122,35 @@ public static class Ping
     /// <summary>Requests through the server get longer: the whole request has to go through.</summary>
     public const int RequestTimeoutMs = 5_000;
 
+    /// <summary>
+    /// What the check downloads through each server: a big, stable file on a
+    /// CDN that answers range requests. Only its first <see cref="CheckBytes"/> are read.
+    /// </summary>
+    public static readonly Uri CheckUrl = new("https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb");
+
+    /// <summary>
+    /// More than some networks let through before they freeze a connection
+    /// they do not like, so such a server fails instead of showing a time.
+    /// </summary>
+    public const int CheckBytes = 64 * 1024;
+
+    /// <summary>How long the check may wait for the next bytes.</summary>
+    public const int CheckIdleMs = 5_000;
+
+    /// <summary>How long the whole check may take.</summary>
+    public const int CheckTotalMs = 8_000;
+
     public static PingResult? Fastest(IEnumerable<PingResult?> results) =>
         results.OfType<PingResult>().OrderBy(r => r.SortValue).FirstOrDefault();
 
     /// <summary>
     /// Times one request to <paramref name="url"/> through the HTTP proxy on
     /// 127.0.0.1:<paramref name="port"/>, up to the response headers. Null
-    /// when it fails or the server answers with an error.
+    /// when it fails or the answer is not the one <see cref="Passes"/> wants.
     /// </summary>
     public static async Task<int?> RequestAsync(Uri url, int port, bool head, int timeoutMs = RequestTimeoutMs, CancellationToken cancellation = default)
     {
-        using var handler = new SocketsHttpHandler
-        {
-            Proxy = new WebProxy(new Uri($"http://127.0.0.1:{port}")),
-            UseProxy = true,
-            AllowAutoRedirect = false,
-            UseCookies = false,
-            ConnectTimeout = TimeSpan.FromMilliseconds(timeoutMs),
-        };
-        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        using var client = Client(port, timeoutMs);
         using var request = new HttpRequestMessage(head ? HttpMethod.Head : HttpMethod.Get, url);
         request.Headers.ConnectionClose = true;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -149,14 +160,96 @@ public static class Ping
             var clock = Stopwatch.StartNew();
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
             int ms = (int)clock.ElapsedMilliseconds;
-            int status = (int)response.StatusCode;
-            return status is >= 200 and <= 399 ? Math.Max(1, ms) : null;
+            return Passes((int)response.StatusCode, url) ? Math.Max(1, ms) : null;
         }
         catch (Exception e) when (e is HttpRequestException or OperationCanceledException or IOException)
         {
             return null;
         }
     }
+
+    /// <summary>
+    /// Whether <paramref name="status"/> is the test address's own answer. A
+    /// generate_204 address answers 204 and nothing else: a 200 there is a
+    /// page from someone on the way, a stub or a captive portal.
+    /// </summary>
+    public static bool Passes(int status, Uri url) =>
+        url.AbsolutePath.EndsWith("generate_204", StringComparison.Ordinal) ? status == 204 : status is >= 200 and <= 399;
+
+    /// <summary>
+    /// Downloads the first <see cref="CheckBytes"/> of <paramref name="url"/>
+    /// through the proxy on 127.0.0.1:<paramref name="port"/>. True only when
+    /// all of them arrive: a server that answers a short request but stalls on
+    /// real traffic fails here.
+    /// </summary>
+    public static async Task<bool> CheckAsync(int port, Uri? url = null, int idleMs = CheckIdleMs, int totalMs = CheckTotalMs, CancellationToken cancellation = default)
+    {
+        using var client = Client(port, idleMs);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url ?? CheckUrl);
+        request.Headers.ConnectionClose = true;
+        request.Headers.Range = new RangeHeaderValue(0, CheckBytes - 1);
+        request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("identity"));
+        using var total = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        total.CancelAfter(totalMs);
+        using var idle = CancellationTokenSource.CreateLinkedTokenSource(total.Token);
+        idle.CancelAfter(idleMs);
+        try
+        {
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, idle.Token).ConfigureAwait(false);
+            if ((int)response.StatusCode is not (200 or 206)) return false;
+            await using var body = await response.Content.ReadAsStreamAsync(idle.Token).ConfigureAwait(false);
+            var buffer = new byte[16 * 1024];
+            int received = 0;
+            while (received < CheckBytes)
+            {
+                idle.CancelAfter(idleMs);
+                int read = await body.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, CheckBytes - received)), idle.Token).ConfigureAwait(false);
+                if (read == 0) return false;
+                received += read;
+            }
+            return true;
+        }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException or IOException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// One server through the probe core's port: the request to
+    /// <paramref name="url"/>, then the check. Failed when either fails, so a
+    /// time means the server passes traffic. TCP and ICMP show the direct
+    /// measurement of a working server, or the request time as Real when the
+    /// server cannot be measured that way.
+    /// </summary>
+    public static async Task<PingResult> ThroughServerAsync(
+        Server server,
+        int port,
+        Uri url,
+        PingMode mode,
+        IPinger? direct,
+        Uri? checkUrl = null,
+        int checkIdleMs = CheckIdleMs,
+        CancellationToken cancellation = default)
+    {
+        if (await RequestAsync(url, port, head: mode == PingMode.ProxyHead, cancellation: cancellation).ConfigureAwait(false) is not { } ms)
+            return PingResult.Failed;
+        if (!await CheckAsync(port, checkUrl, checkIdleMs, cancellation: cancellation).ConfigureAwait(false)) return PingResult.Failed;
+        if (mode.ThroughProxy() || direct is null) return Result(ms, mode.ThroughProxy() ? mode : PingMode.Real);
+        return await direct.MeasureAsync(server, TimeoutMs, cancellation).ConfigureAwait(false) is PingMs measured
+            ? measured
+            : Result(ms, PingMode.Real);
+    }
+
+    private static HttpClient Client(int port, int connectTimeoutMs) => new(new SocketsHttpHandler
+    {
+        Proxy = new WebProxy(new Uri($"http://127.0.0.1:{port}")),
+        UseProxy = true,
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        AutomaticDecompression = DecompressionMethods.None,
+        ConnectTimeout = TimeSpan.FromMilliseconds(connectTimeoutMs),
+    }, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
 
     /// <summary>What a proxied request time shows as in <paramref name="mode"/>.</summary>
     public static PingResult Result(int? ms, PingMode mode)

@@ -2,6 +2,7 @@ package app.litetunnel.core
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,6 +10,8 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URL
+import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -198,4 +201,161 @@ class PingTests {
         val closed = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
         assertNull(Ping.request(Ping.testUrl(""), closed, head = false, timeoutMs = 1_000))
     }
+
+    @Test
+    fun generate204NeedsA204() {
+        val url = Ping.testUrl("http://check.invalid/generate_204")
+        FakeProxy { FakeProxy.Reply("200 OK", "ok".toByteArray()) }.use { stub ->
+            assertNull("a page instead of 204 is not the test address", Ping.request(url, stub.port, head = false, timeoutMs = 3_000))
+        }
+        FakeProxy { FakeProxy.Reply("204 No Content") }.use { real ->
+            assertTrue(Ping.request(url, real.port, head = false, timeoutMs = 3_000) != null)
+        }
+    }
+
+    @Test
+    fun otherAddressesPassWith200To399() {
+        val url = URL("https://example.com/")
+        assertTrue(Ping.passes(200, url))
+        assertTrue(Ping.passes(302, url))
+        assertFalse(Ping.passes(404, url))
+        assertFalse(Ping.passes(500, url))
+        val generate = URL("https://www.gstatic.com/generate_204")
+        assertTrue(Ping.passes(204, generate))
+        assertFalse(Ping.passes(200, generate))
+        assertFalse(Ping.passes(302, generate))
+    }
+
+    @Test
+    fun checkPassesOnTheWholeDownload() {
+        var head = ""
+        FakeProxy {
+            head = it
+            FakeProxy.Reply("206 Partial Content", ByteArray(Ping.CHECK_BYTES))
+        }.use { proxy ->
+            assertTrue(Ping.check(proxy.port, file, idleMs = 1_000, totalMs = 3_000))
+        }
+        assertTrue(head, head.lowercase().contains("range: bytes=0-${Ping.CHECK_BYTES - 1}"))
+    }
+
+    @Test
+    fun checkFailsWhenTheConnectionStalls() {
+        // About what some networks let through before they freeze a connection.
+        FakeProxy { FakeProxy.Reply("200 OK", ByteArray(16 * 1024), length = Ping.CHECK_BYTES, keepOpen = true) }.use { proxy ->
+            val start = System.nanoTime()
+            assertFalse(Ping.check(proxy.port, file, idleMs = 1_000, totalMs = 3_000))
+            assertTrue((System.nanoTime() - start) / 1_000_000 < 5_000)
+        }
+    }
+
+    @Test
+    fun checkEndsAtItsTotalTime() {
+        // Never idle long enough to time out a read, but too slow in all.
+        FakeProxy { FakeProxy.Reply("200 OK", ByteArray(0), length = Ping.CHECK_BYTES, keepOpen = true, trickle = true) }.use { proxy ->
+            val start = System.nanoTime()
+            assertFalse(Ping.check(proxy.port, file, idleMs = 1_000, totalMs = 1_500))
+            val took = (System.nanoTime() - start) / 1_000_000
+            assertTrue("took $took ms", took < 4_000)
+        }
+    }
+
+    @Test
+    fun checkFailsOnAnErrorPage() {
+        FakeProxy { FakeProxy.Reply("403 Forbidden", ByteArray(Ping.CHECK_BYTES)) }.use { proxy ->
+            assertFalse(Ping.check(proxy.port, file, idleMs = 1_000, totalMs = 3_000))
+        }
+    }
+
+    @Test
+    fun checkStopsWhenTheRangeIsIgnored() {
+        FakeProxy { FakeProxy.Reply("200 OK", ByteArray(4 * Ping.CHECK_BYTES)) }.use { proxy ->
+            assertTrue(Ping.check(proxy.port, file, idleMs = 1_000, totalMs = 3_000))
+        }
+    }
+
+    @Test
+    fun aTimeMeansTheServerPassedTheCheck() {
+        val server = Server(null, ShareLink.parse("trojan://pw@a.example.com:443#a"))
+        val url = Ping.testUrl("http://check.invalid/generate_204")
+        val answers = Pinger { _, _ -> PingResult.Ms(42) }
+        val silent = Pinger { _, _ -> null }
+        val works: (String) -> FakeProxy.Reply = { head ->
+            if (head.contains("generate_204")) FakeProxy.Reply("204 No Content")
+            else FakeProxy.Reply("206 Partial Content", ByteArray(Ping.CHECK_BYTES))
+        }
+        FakeProxy(works).use { proxy ->
+            assertEquals(PingResult.Ms(42), Ping.throughServer(server, proxy.port, url, PingMode.TCP, answers, file, 1_000))
+            val real = Ping.throughServer(server, proxy.port, url, PingMode.TCP, silent, file, 1_000)
+            assertTrue("$real", real is PingResult.Ms)
+            assertTrue(Ping.throughServer(server, proxy.port, url, PingMode.PROXY_GET, null, file, 1_000) is PingResult.Ms)
+        }
+        // Answers TCP and the short request, then stalls: no time.
+        val stalls: (String) -> FakeProxy.Reply = { head ->
+            if (head.contains("generate_204")) FakeProxy.Reply("204 No Content")
+            else FakeProxy.Reply("200 OK", ByteArray(16 * 1024), length = Ping.CHECK_BYTES, keepOpen = true)
+        }
+        FakeProxy(stalls).use { proxy ->
+            assertEquals(PingResult.Failed, Ping.throughServer(server, proxy.port, url, PingMode.TCP, answers, file, 1_000))
+            assertEquals(PingResult.Failed, Ping.throughServer(server, proxy.port, url, PingMode.REAL, null, file, 1_000))
+        }
+        // A stub page in place of 204: no time either.
+        FakeProxy { FakeProxy.Reply("200 OK", ByteArray(Ping.CHECK_BYTES)) }.use { proxy ->
+            assertEquals(PingResult.Failed, Ping.throughServer(server, proxy.port, url, PingMode.ICMP, answers, file, 1_000))
+        }
+    }
+
+    private val file = URL("http://check.invalid/file.bin")
+}
+
+/** Answers every proxied request with `answer(head)`, on 127.0.0.1, until closed. */
+private class FakeProxy(private val answer: (String) -> Reply) : AutoCloseable {
+    class Reply(
+        val status: String,
+        val body: ByteArray = ByteArray(0),
+        /** The Content-Length sent, when it is not the body's. */
+        val length: Int = body.size,
+        /** Leaves the connection open after the body, as a stalled one. */
+        val keepOpen: Boolean = false,
+        /** After the body, one byte every 200 ms. */
+        val trickle: Boolean = false,
+    )
+
+    private val listener = ServerSocket(0, 8, Ping.LOOPBACK)
+    private val sockets = Collections.synchronizedList(ArrayList<Socket>())
+    val port: Int get() = listener.localPort
+
+    init {
+        daemon {
+            while (true) {
+                val socket = runCatching { listener.accept() }.getOrNull() ?: break
+                sockets.add(socket)
+                daemon { runCatching { serve(socket) } }
+            }
+        }
+    }
+
+    private fun serve(socket: Socket) {
+        val reader = socket.getInputStream().bufferedReader()
+        val head = generateSequence { reader.readLine()?.takeIf { it.isNotEmpty() } }.joinToString("\n")
+        val reply = answer(head)
+        val out = socket.getOutputStream()
+        out.write("HTTP/1.1 ${reply.status}\r\nContent-Length: ${reply.length}\r\nConnection: close\r\n\r\n".toByteArray())
+        out.write(reply.body)
+        out.flush()
+        if (reply.trickle) {
+            repeat(reply.length - reply.body.size) {
+                Thread.sleep(200)
+                out.write(0)
+                out.flush()
+            }
+        }
+        if (!reply.keepOpen) socket.close()
+    }
+
+    override fun close() {
+        listener.close()
+        sockets.forEach { runCatching { it.close() } }
+    }
+
+    private fun daemon(block: () -> Unit) = Thread(block).apply { isDaemon = true }.start()
 }

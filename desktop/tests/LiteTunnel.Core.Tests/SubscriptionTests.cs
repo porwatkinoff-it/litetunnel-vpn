@@ -334,6 +334,17 @@ public class SubscriptionTests
     }
 
     [Fact]
+    public void RowsShowingIncludeTheirGroups()
+    {
+        var (state, _) = Subscribed([ServerGroup.Make(Named("a", "b"), "Группа"), .. Named("a", "b", "c")]);
+        Guid Id(string name) => state.Servers.Single(s => s.Name == name).Id;
+        Assert.Equal(["Авто-выбор", "Группа", "a", "b", "c"], state.Servers.Select(s => s.Name));
+        Assert.Equal(new HashSet<Guid> { Id("a"), Id("Группа"), Id("Авто-выбор") }, state.RowsShowing(new HashSet<Guid> { Id("a") }));
+        Assert.Equal(new HashSet<Guid> { Id("c"), Id("Авто-выбор") }, state.RowsShowing(new HashSet<Guid> { Id("c") }));
+        Assert.Empty(state.RowsShowing(new HashSet<Guid>()));
+    }
+
+    [Fact]
     public void ProviderGroupOverSomeServersGetsAnAutoRowOverAll()
     {
         var (state, id) = Subscribed([ServerGroup.Make(Named("a", "b"), "Группа"), .. Named("a", "c")]);

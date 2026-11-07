@@ -12,6 +12,7 @@ import java.net.URL
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -100,9 +101,25 @@ object Ping {
     fun fastest(results: Collection<PingResult?>): PingResult? = results.filterNotNull().minByOrNull { it.sortValue }
 
     /**
+     * What the check downloads through each server: the start of a large
+     * file on Google's download servers, asked for by range. Some networks
+     * let a connection through, then stall it after about 16 KB. A server
+     * behind one answers a short request in time but cannot load a page.
+     */
+    val CHECK_URL = URL("https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb")
+    const val CHECK_BYTES = 64 * 1024
+    const val CHECK_IDLE_MS = 5_000
+    const val CHECK_TOTAL_MS = 8_000
+
+    /** Ends a check that runs past its total time. */
+    private val deadlines = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "ping-deadline").apply { isDaemon = true }
+    }
+
+    /**
      * Times one request to `url` through the HTTP proxy on 127.0.0.1:`port`,
-     * up to the response headers. Null when it fails or the server answers
-     * with an error.
+     * up to the response headers. Null when it fails or the answer is not
+     * the one the address gives (see [passes]).
      */
     fun request(url: URL, port: Int, head: Boolean, timeoutMs: Int = REQUEST_TIMEOUT_MS): Int? {
         val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK, port))
@@ -118,12 +135,86 @@ object Ping {
             val start = System.nanoTime()
             val status = connection.responseCode
             val ms = ((System.nanoTime() - start) / 1_000_000).toInt()
-            if (status in 200..399) maxOf(1, ms) else null
+            if (passes(status, url)) maxOf(1, ms) else null
         } catch (e: IOException) {
             null
         } finally {
             connection?.disconnect()
         }
+    }
+
+    /**
+     * Whether a status is the test address's real answer. A generate_204
+     * address answers 204 and nothing else, so a stub page or a login page
+     * on the way fails; any other address passes with 200 to 399.
+     */
+    fun passes(status: Int, url: URL): Boolean =
+        if (url.path.endsWith("generate_204")) status == 204 else status in 200..399
+
+    /**
+     * Downloads [CHECK_BYTES] of `url` through the proxy on 127.0.0.1:`port`.
+     * True once all of them are in. A connection that stalls for `idleMs`,
+     * or takes longer than `totalMs`, fails.
+     */
+    fun check(port: Int, url: URL = CHECK_URL, idleMs: Int = CHECK_IDLE_MS, totalMs: Int = CHECK_TOTAL_MS): Boolean {
+        val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK, port))
+        var connection: HttpURLConnection? = null
+        var deadline: ScheduledFuture<*>? = null
+        val end = System.nanoTime() + totalMs * 1_000_000L
+        return try {
+            val open = url.openConnection(proxy) as HttpURLConnection
+            connection = open
+            // A read waits up to idleMs for each piece; this ends the whole of it.
+            deadline = deadlines.schedule({ open.disconnect() }, totalMs.toLong(), TimeUnit.MILLISECONDS)
+            open.connectTimeout = idleMs
+            open.readTimeout = idleMs
+            open.useCaches = false
+            open.instanceFollowRedirects = false
+            open.setRequestProperty("Range", "bytes=0-${CHECK_BYTES - 1}")
+            open.setRequestProperty("Accept-Encoding", "identity")
+            open.setRequestProperty("Connection", "close")
+            val status = open.responseCode
+            if (status != 200 && status != 206) return false
+            // Counted, not read whole: a server that ignores the range does
+            // not send the whole file. Not closed either: closing would read
+            // the rest; disconnect() below drops it.
+            val input = open.inputStream
+            val buffer = ByteArray(16 * 1024)
+            var count = 0
+            while (count < CHECK_BYTES) {
+                val read = input.read(buffer, 0, minOf(buffer.size, CHECK_BYTES - count))
+                if (read < 0 || System.nanoTime() > end) return false
+                count += read
+            }
+            true
+        } catch (e: IOException) {
+            false
+        } finally {
+            deadline?.cancel(false)
+            connection?.disconnect()
+        }
+    }
+
+    /**
+     * Checks one server through the proxy on 127.0.0.1:`port`: the request
+     * to `url`, then the download. A server that fails either is Failed, so
+     * a time means it works. In the proxy modes the time is the request's.
+     * TCP and ICMP time the server with `direct`, and show the request's
+     * time read like a ping where the server does not answer that way.
+     */
+    fun throughServer(
+        server: Server,
+        port: Int,
+        url: URL,
+        mode: PingMode,
+        direct: Pinger?,
+        checkUrl: URL = CHECK_URL,
+        checkIdleMs: Int = CHECK_IDLE_MS,
+    ): PingResult {
+        val ms = request(url, port, head = mode == PingMode.PROXY_HEAD) ?: return PingResult.Failed
+        if (!check(port, checkUrl, idleMs = checkIdleMs)) return PingResult.Failed
+        if (mode.throughProxy) return result(ms, mode)
+        return direct?.measure(server, TIMEOUT_MS) as? PingResult.Ms ?: result(ms, PingMode.REAL)
     }
 
     /** What a proxied request time shows as in `mode`. */

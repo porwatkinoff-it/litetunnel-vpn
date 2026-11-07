@@ -197,6 +197,9 @@ public sealed class HomeViewModel : PageViewModel
             case nameof(AppModel.PingingSubscription):
                 foreach (var section in Sections) section.RaiseBusy();
                 break;
+            case nameof(AppModel.PingingIds):
+                foreach (var section in Sections) section.RaisePinging();
+                break;
         }
     }
 
@@ -392,6 +395,11 @@ public sealed class SectionViewModel : Observable
         Ping.Refresh();
     }
 
+    internal void RaisePinging()
+    {
+        foreach (var row in rows.Values) row.SetPinging(Model.PingingIds.Contains(row.Server.Id));
+    }
+
     internal void Update()
     {
         var state = Model.State;
@@ -421,6 +429,7 @@ public sealed class ServerRowViewModel : Observable
     private readonly HomeViewModel home;
     private Server server;
     private bool isSelected;
+    private bool isPinging;
     private PingDisplay display;
 
     public ServerRowViewModel(HomeViewModel home, Server server)
@@ -448,6 +457,11 @@ public sealed class ServerRowViewModel : Observable
     public PingResult? Ping => server.LastPing;
 
     public PingDisplay Display => display;
+
+    /// <summary>Its ping is being measured: a spinner instead of the old result.</summary>
+    public bool IsPinging => isPinging;
+
+    public bool ShowPing => !isPinging;
 
     public bool IsSelected => isSelected;
 
@@ -490,7 +504,16 @@ public sealed class ServerRowViewModel : Observable
             display = pingDisplay;
             Raise(nameof(Display));
         }
+        SetPinging(home.Model.PingingIds.Contains(next.Id));
         PingThis.Refresh();
+    }
+
+    internal void SetPinging(bool pinging)
+    {
+        if (isPinging == pinging) return;
+        isPinging = pinging;
+        Raise(nameof(IsPinging));
+        Raise(nameof(ShowPing));
     }
 }
 

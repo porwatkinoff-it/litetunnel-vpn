@@ -16,7 +16,6 @@ import app.litetunnel.core.DeviceInfo
 import app.litetunnel.core.ImportItem
 import app.litetunnel.core.Importer
 import app.litetunnel.core.Ping
-import app.litetunnel.core.PingMode
 import app.litetunnel.core.PingResult
 import app.litetunnel.core.RuleSetUpdater
 import app.litetunnel.core.RuleSets
@@ -79,6 +78,13 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     /** The subscription whose header ping button started the current ping. */
     var pingingSubscription by mutableStateOf<UUID?>(null)
         private set
+
+    /** The rows being measured: they show a spinner, not their last result. */
+    var pingingIds by mutableStateOf(emptySet<UUID>())
+        private set
+
+    /** The servers being measured whose results are not in yet. */
+    private var pendingPings = emptySet<UUID>()
     var updatingRuleSets by mutableStateOf(false)
         private set
     var ruleSetsReady by mutableStateOf(true)
@@ -336,35 +342,42 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         val servers = state.pingTargets(rows)
         if (pinging || servers.isEmpty()) return
         pinging = true
+        pendingPings = servers.mapTo(HashSet()) { it.id }
+        pingingIds = state.rowsShowing(pendingPings)
         try {
             val settings = state.settings
             // Posted to the main thread in order, ahead of the code after measureAll.
             val report: (UUID, PingResult?) -> Unit = { id, result -> viewModelScope.launch(Dispatchers.Main) { setPing(id, result) } }
             val failure = withContext(Dispatchers.IO) {
-                when (settings.pingMode) {
-                    PingMode.TCP -> Ping.measureAll(servers, Tunnel.pinger(), onResult = report)
-                    PingMode.ICMP -> Ping.measureAll(servers, Tunnel.icmpPinger(), onResult = report)
-                    PingMode.REAL, PingMode.PROXY_GET, PingMode.PROXY_HEAD -> try {
-                        ProxyProbe.measureAll(getApplication(), servers, settings, report)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        Ping.measureAll(servers, Tunnel.pinger(), onResult = report)
-                        return@withContext e.message?.lineSequence()?.firstOrNull()?.take(160) ?: e.javaClass.simpleName
-                    }
+                try {
+                    ProxyProbe.measureAll(getApplication(), servers, settings, report)
+                    null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    e.message?.lineSequence()?.firstOrNull()?.take(160) ?: e.javaClass.simpleName
                 }
-                null
             }
-            failure?.let { show("Пинг через сервер не запустился: ${it.trimEnd('.')}. Показан TCP.", error = true) }
+            if (failure != null) {
+                show("Не удалось проверить серверы: ${failure.trimEnd('.')}", error = true)
+                // Not checked, so no time: an old one would pass for a new one.
+                for (id in pendingPings) state = state.settingPing(null, id)
+            }
             // The config does not hold pings: save the state only.
             persist(state)
         } finally {
             pinging = false
+            pendingPings = emptySet()
+            pingingIds = emptySet()
         }
     }
 
     private fun setPing(id: UUID, result: PingResult?) {
         state = state.settingPing(result, id)
+        if (id in pendingPings) {
+            pendingPings = pendingPings - id
+            pingingIds = state.rowsShowing(pendingPings)
+        }
     }
 
     // rule-sets

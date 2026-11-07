@@ -170,8 +170,9 @@ public enum LogLevel { Error, Warn, Info, Debug }
 public enum SortMode { None, Ping, Name }
 
 /// <summary>
-/// How a ping is measured. The first three send an HTTP request through the
-/// server itself, so a server that answers but does not pass traffic fails.
+/// What time a ping shows. Every mode first checks the server through
+/// itself: a request to the test address and a 64 KB download. A server that
+/// fails either shows «нет связи», so a time means it works.
 /// </summary>
 public enum PingMode
 {
@@ -236,6 +237,11 @@ public static class EnumRaw
         _ => "dots",
     };
 
+    /// <summary>
+    /// The time is the request's through the server. TCP and ICMP time the
+    /// server directly, and fall back to the request's (as Real) when it does
+    /// not answer them.
+    /// </summary>
     public static bool ThroughProxy(this PingMode m) => m is PingMode.Real or PingMode.ProxyGet or PingMode.ProxyHead;
 }
 
@@ -426,6 +432,19 @@ public sealed record AppState
             foreach (var target in (IEnumerable<Server>?)MemberRows(server) ?? [server])
                 if (seen.Add(target.Id)) result.Add(target);
         return result;
+    }
+
+    /// <summary>
+    /// The rows whose ping changes while <paramref name="ids"/> are measured:
+    /// those rows and the groups made of them.
+    /// </summary>
+    public IReadOnlySet<Guid> RowsShowing(IReadOnlySet<Guid> ids)
+    {
+        var rows = new HashSet<Guid>(ids);
+        if (ids.Count == 0) return rows;
+        foreach (var group in Servers.Where(s => s.IsGroup))
+            if (MemberRows(group) is { } members && members.Any(m => ids.Contains(m.Id))) rows.Add(group.Id);
+        return rows;
     }
 
     /// <summary>Records a result, and the fastest on the groups the row belongs to.</summary>

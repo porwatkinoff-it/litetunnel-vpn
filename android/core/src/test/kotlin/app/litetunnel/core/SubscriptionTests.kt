@@ -385,6 +385,17 @@ class SubscriptionTests {
     }
 
     @Test
+    fun rowsShowingIncludeTheirGroups() {
+        val (subscribed) = subscribed(parsed("a", "b"))
+        val (state, manual) = subscribed.addManual(parsed("m"))
+        val (auto, a) = state.servers
+        val m = manual.single()
+        assertEquals(setOf(a.id, auto.id), state.rowsShowing(setOf(a.id)))
+        assertEquals(setOf(m.id), state.rowsShowing(setOf(m.id)))
+        assertEquals(emptySet<UUID>(), state.rowsShowing(emptySet()))
+    }
+
+    @Test
     fun groupWithoutItsRowsIsPingedItself() {
         val group = ServerGroup.make(parsed("a", "b"), "Группа")
         var (state) = subscribed(listOf(group))

@@ -470,7 +470,8 @@ private fun ServerRow(model: AppModel, server: Server) {
                 Text(server.subtitle, style = LiteType.rowDetail, color = Lite.colors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.width(8.dp))
-            server.lastPing?.let { PingBadge(it, model.settings.pingDisplay) }
+            if (server.id in model.pingingIds) PingSpinner()
+            else server.lastPing?.let { PingBadge(it, model.settings.pingDisplay) }
             // Without the 48 minimum, which would hold every row taller than it needs.
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
                 IconButton(onClick = openDetails, modifier = Modifier.semantics { onClick(label = "Подробнее о сервере", action = null) }) {

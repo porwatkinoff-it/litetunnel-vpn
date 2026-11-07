@@ -78,6 +78,11 @@ public sealed class ServerDetailViewModel : PageViewModel
 
     public bool PingUnknown => Server?.LastPing is null;
 
+    /// <summary>Its ping is being measured: a spinner instead of the old result.</summary>
+    public bool IsPinging => Model.PingingIds.Contains(id);
+
+    public bool ShowPingText => !IsPinging;
+
     public string? SubscriptionName => Server?.SubscriptionId is { } subId ? Model.State.Subscriptions.FirstOrDefault(s => s.Id == subId)?.Name : null;
 
     public bool HasSubscription => SubscriptionName is not null;
@@ -109,6 +114,7 @@ public sealed class ServerDetailViewModel : PageViewModel
         {
             listening = true;
             Model.StateChanged += Refresh;
+            Model.PropertyChanged += OnModelChanged;
         }
         Refresh();
     }
@@ -118,6 +124,20 @@ public sealed class ServerDetailViewModel : PageViewModel
         if (!listening) return;
         listening = false;
         Model.StateChanged -= Refresh;
+        Model.PropertyChanged -= OnModelChanged;
+    }
+
+    private void OnModelChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(Model.PingingIds))
+        {
+            Raise(nameof(IsPinging));
+            Raise(nameof(ShowPingText));
+        }
+        else if (e.PropertyName == nameof(Model.Pinging))
+        {
+            PingThis.Refresh();
+        }
     }
 
     private void Refresh()

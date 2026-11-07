@@ -6,7 +6,7 @@
     <LangVersion>latest</LangVersion>
     <InvariantGlobalization>true</InvariantGlobalization>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-    <Version>0.1.3</Version>
+    <Version>0.1.4</Version>
     <Company>LiteTunnel</Company>
     <Product>LiteTunnel</Product>
   </PropertyGroup>

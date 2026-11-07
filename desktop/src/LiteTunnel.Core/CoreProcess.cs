@@ -104,6 +104,45 @@ public sealed class CoreProcess : IDisposable
         return core;
     }
 
+    /// <summary>
+    /// Runs <c>sing-box check</c> on <paramref name="configPath"/>: whether the
+    /// core accepts the config, without starting anything. False when it
+    /// does not, or does not answer within <paramref name="timeout"/>.
+    /// </summary>
+    public static async Task<bool> CheckAsync(string executable, string configPath, string workDirectory, TimeSpan timeout, CancellationToken cancellation = default)
+    {
+        var info = new ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = workDirectory,
+        };
+        foreach (var arg in new[] { "check", "-c", configPath, "-D", workDirectory, "--disable-color" }) info.ArgumentList.Add(arg);
+        using var process = new Process { StartInfo = info };
+        process.OutputDataReceived += (_, _) => { };
+        process.ErrorDataReceived += (_, _) => { };
+        process.Start();
+        if (OperatingSystem.IsWindows()) WindowsJob.Assign(process);
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        limit.CancelAfter(timeout);
+        try
+        {
+            await process.WaitForExitAsync(limit.Token).ConfigureAwait(false);
+            return process.ExitCode == 0;
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(); } catch (InvalidOperationException) { }
+            cancellation.ThrowIfCancellationRequested();
+            return false;
+        }
+    }
+
     private void OnLine(string? line)
     {
         if (string.IsNullOrEmpty(line)) return;

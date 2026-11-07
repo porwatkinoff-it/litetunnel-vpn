@@ -43,12 +43,16 @@
             </StackPanel>
             <Grid Classes="row" ColumnDefinitions="*,Auto">
               <TextBlock Classes="body" Text="Пинг" />
-              <TextBlock Grid.Column="1" Classes="body tabular"
-                         Classes.connected="{Binding PingGood}"
-                         Classes.busy="{Binding PingSlow}"
-                         Classes.danger="{Binding PingBad}"
-                         Classes.secondary="{Binding PingUnknown}"
-                         Text="{Binding PingText}" />
+              <Panel Grid.Column="1">
+                <TextBlock Classes="body tabular"
+                           Classes.connected="{Binding PingGood}"
+                           Classes.busy="{Binding PingSlow}"
+                           Classes.danger="{Binding PingBad}"
+                           Classes.secondary="{Binding PingUnknown}"
+                           Text="{Binding PingText}" IsVisible="{Binding ShowPingText}" />
+                <Path Classes="spinner" IsVisible="{Binding IsPinging}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                      ToolTip.Tip="Проверяется" AutomationProperties.Name="Проверяется" />
+              </Panel>
             </Grid>
             <StackPanel IsVisible="{Binding HasSubscription}">
               <Rectangle Classes="sep" />

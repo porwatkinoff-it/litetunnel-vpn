@@ -41,7 +41,9 @@ struct ServerDetailView: View {
                     }
                 }
                 LabeledContent("Пинг") {
-                    if let ping = server.lastPing {
+                    if model.pingingIDs.contains(server.id) {
+                        PingSpinner()
+                    } else if let ping = server.lastPing {
                         Text(ping.label).foregroundStyle(ping.color)
                     } else {
                         Text("—").foregroundStyle(.secondary)

@@ -82,9 +82,7 @@ struct SettingsView: View {
                 Picker("Способ", selection: settings.pingMode) {
                     ForEach(PingMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                if model.settings.pingMode.throughProxy {
-                    PingURLField(url: settings.pingURL)
-                }
+                PingURLField(url: settings.pingURL)
                 Picker("Вид", selection: settings.pingDisplay) {
                     ForEach(PingDisplay.allCases, id: \.self) { Text($0.title).tag($0) }
                 }

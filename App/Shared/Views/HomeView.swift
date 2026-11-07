@@ -110,7 +110,7 @@ struct HomeView: View {
 
     private func row(_ server: Server) -> some View {
         ServerRow(server: server, selected: server.id == model.state.selectedServerID,
-                  pingDisplay: model.settings.pingDisplay) {
+                  pingDisplay: model.settings.pingDisplay, pinging: model.pingingIDs.contains(server.id)) {
             path.append(server.id)
         }
         .contentShape(Rectangle())
@@ -188,6 +188,8 @@ struct ServerRow: View {
     let server: Server
     let selected: Bool
     let pingDisplay: PingDisplay
+    /// Being measured now: a spinner instead of the last result.
+    let pinging: Bool
     let onInfo: () -> Void
 
     // Text styles, so the row still follows the system text size.
@@ -213,7 +215,9 @@ struct ServerRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
-            if let ping = server.lastPing {
+            if pinging {
+                PingSpinner()
+            } else if let ping = server.lastPing {
                 PingBadge(ping: ping, display: pingDisplay)
             }
             Button(action: onInfo) {
