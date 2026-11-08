@@ -21,9 +21,22 @@ final class VPNController: ObservableObject {
 
     static let profileName = "LiteTunnel"
 
-    static var providerBundleID: String {
-        (Bundle.main.bundleIdentifier ?? "com.example.litetunnel") + ".tunnel"
-    }
+    /// Read from the extension itself, since a tool that re-signs the app
+    /// may give it other bundle IDs.
+    static let providerBundleID: String = {
+        let plugins = Bundle.main.builtInPlugInsURL.flatMap {
+            try? FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)
+        } ?? []
+        for url in plugins where url.pathExtension == "appex" {
+            guard let bundle = Bundle(url: url),
+                  let ext = bundle.object(forInfoDictionaryKey: "NSExtension") as? [String: Any],
+                  ext["NSExtensionPointIdentifier"] as? String == "com.apple.networkextension.packet-tunnel",
+                  let id = bundle.bundleIdentifier
+            else { continue }
+            return id
+        }
+        return (Bundle.main.bundleIdentifier ?? "com.example.litetunnel") + ".tunnel"
+    }()
 
     #if os(macOS)
     /// Builds from scripts/package.sh have no Apple profile, so their

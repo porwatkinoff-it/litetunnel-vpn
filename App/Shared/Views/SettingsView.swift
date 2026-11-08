@@ -114,7 +114,7 @@ struct SettingsView: View {
                 LabeledContent("Версия", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
                 Link("Ядро sing-box (GPLv3)", destination: URL(string: "https://github.com/SagerNet/sing-box")!)
                 if !model.hasAppGroup {
-                    Text("Сборка без App Group: туннель не запустится. Укажите команду разработчика в Config/Signing.xcconfig.")
+                    Text("Подпись без App Group: туннель не запустится. Нужен профиль с App Group и Network Extension.")
                         .foregroundStyle(.orange)
                 }
             } header: {

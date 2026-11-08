@@ -37,16 +37,36 @@ final class AppModel: ObservableObject {
         if let shared = SharedStore.shared() {
             store = shared
             hasAppGroup = true
+            Self.adoptLocalState(into: shared)
         } else {
             // Unsigned builds have no App Group. The app still works for
             // editing; the tunnel cannot read this folder.
-            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            store = SharedStore(container: support.appendingPathComponent("LiteTunnel", isDirectory: true))
+            store = Self.localStore
             hasAppGroup = false
         }
         try? store.prepareDirectories()
         state = store.loadState()
         if state.syncAutoGroups() { try? store.save(state) }
+    }
+
+    private static var localStore: SharedStore {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return SharedStore(container: support.appendingPathComponent("LiteTunnel", isDirectory: true))
+    }
+
+    /// An earlier run that found no App Group kept its subscriptions in the
+    /// app's own folder. Moves them into the group when they are newer than
+    /// what the group holds, so they are not lost once the group opens.
+    private static func adoptLocalState(into shared: SharedStore) {
+        let fm = FileManager.default
+        let local = localStore.stateURL
+        func modified(_ url: URL) -> Date? {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        }
+        guard let localDate = modified(local), localDate > modified(shared.stateURL) ?? .distantPast else { return }
+        try? fm.createDirectory(at: shared.container, withIntermediateDirectories: true)
+        try? fm.removeItem(at: shared.stateURL)
+        try? fm.moveItem(at: local, to: shared.stateURL)
     }
 
     var settings: AppSettings { state.settings }
@@ -105,7 +125,7 @@ final class AppModel: ObservableObject {
             return
         }
         guard hasAppGroup else {
-            show("Сборка без подписи: туннель не сможет прочитать настройки. Укажите команду в Config/Signing.xcconfig.", error: true)
+            show("Подпись без App Group: туннель не сможет прочитать настройки. Подпишите приложение профилем, в котором есть App Group.", error: true)
             return
         }
         applyConfig()

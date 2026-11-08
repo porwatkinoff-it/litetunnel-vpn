@@ -78,8 +78,14 @@ TUNNEL="$APP/PlugIns/PacketTunnel.appex"
   -c "Add :com.apple.developer.networking.networkextension array" \
   -c "Add :com.apple.developer.networking.networkextension:0 string packet-tunnel-provider" \
   -c "Add :com.apple.security.application-groups array" \
-  -c "Add :com.apple.security.application-groups:0 string $GROUP" \
   "$TMP/entitlements.plist" >/dev/null
+# Every group the profile has: the app opens the built-in one first and falls
+# back to the others in the profile's order, and so does the tunnel.
+i=0
+while g="$(pl "Entitlements:com.apple.security.application-groups:$i" 2>/dev/null)"; do
+  /usr/libexec/PlistBuddy -c "Add :com.apple.security.application-groups:$i string $g" "$TMP/entitlements.plist"
+  i=$((i + 1))
+done
 
 # The profile covers one App ID, so the tunnel is signed with it too, as
 # re-signing tools do. Inside out: the extension first, then the app.

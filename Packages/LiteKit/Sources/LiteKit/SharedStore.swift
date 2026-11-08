@@ -22,11 +22,54 @@ public struct SharedStore: Sendable {
         bundle.object(forInfoDictionaryKey: "LTAppGroup") as? String
     }
 
+    /// Opens the first group the signature allows: the Info.plist one, then
+    /// the ones in the embedded profile. A tool that re-signs the IPA with
+    /// someone's own profile puts that profile's group in the signature but
+    /// leaves the Info.plist value, so without the profile iOS gives no
+    /// container. The app and the tunnel read the same profiles in the same
+    /// order, so they land in the same group.
     public static func shared(bundle: Bundle = .main) -> SharedStore? {
-        guard let group = appGroupID(bundle: bundle),
-              let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
-        else { return nil }
-        return SharedStore(container: url)
+        for group in candidateGroups(bundle: bundle) {
+            if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) {
+                return SharedStore(container: url)
+            }
+        }
+        return nil
+    }
+
+    static func candidateGroups(bundle: Bundle) -> [String] {
+        var groups: [String] = []
+        if let group = appGroupID(bundle: bundle) { groups.append(group) }
+        for url in profileURLs(bundle: bundle) {
+            guard let data = try? Data(contentsOf: url) else { continue }
+            for group in appGroups(inProfile: data) where !groups.contains(group) {
+                groups.append(group)
+            }
+        }
+        return groups
+    }
+
+    /// The bundle's own profile, and for the tunnel also the app's, since a
+    /// signing tool may embed a profile in the app only.
+    static func profileURLs(bundle: Bundle) -> [URL] {
+        var urls = [bundle.bundleURL.appendingPathComponent("embedded.mobileprovision")]
+        if bundle.bundleURL.pathExtension == "appex" {
+            let app = bundle.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+            urls.append(app.appendingPathComponent("embedded.mobileprovision"))
+        }
+        return urls
+    }
+
+    /// The App Groups a provisioning profile allows. The profile is a signed
+    /// CMS message that holds its plist as plain XML.
+    static func appGroups(inProfile data: Data) -> [String] {
+        guard let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.upperBound..<data.endIndex),
+              let plist = try? PropertyListSerialization.propertyList(from: Data(data[start.lowerBound..<end.upperBound]), format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any],
+              let groups = entitlements["com.apple.security.application-groups"] as? [String]
+        else { return [] }
+        return groups
     }
 
     public var stateURL: URL { container.appendingPathComponent("state.json") }
