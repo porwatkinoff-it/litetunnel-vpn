@@ -16,6 +16,9 @@ final class VPNController: ObservableObject {
     @Published private(set) var traffic = TunnelStatus()
 
     private var manager: NETunnelProviderManager?
+    /// The app's state for the tunnel, sent with every start and reload. A
+    /// tunnel that shares the app's App Group ignores it.
+    var handoff: (@MainActor () -> TunnelHandoff?)?
     private var observer: NSObjectProtocol?
     private var loaded = false
 
@@ -197,8 +200,9 @@ final class VPNController: ObservableObject {
         }
         #endif
         let manager = try await ensureProfile(settings)
+        let options = (try? handoff?()?.encoded()).map { [TunnelHandoff.optionKey: $0 as NSData] }
         do {
-            try manager.connection.startVPNTunnel()
+            try manager.connection.startVPNTunnel(options: options)
         } catch let error as NEVPNError {
             switch error.code {
             case .configurationDisabled, .configurationInvalid:
@@ -261,19 +265,30 @@ final class VPNController: ObservableObject {
             return await proxyMode.handle(command)
         }
         #endif
+        return await sendToTunnel(command.data)
+    }
+
+    private func sendToTunnel(_ message: Data) async -> Data? {
         guard status == .connected, let session = manager?.connection as? NETunnelProviderSession else { return nil }
         return await withCheckedContinuation { continuation in
             do {
-                try session.sendProviderMessage(command.data) { continuation.resume(returning: $0) }
+                try session.sendProviderMessage(message) { continuation.resume(returning: $0) }
             } catch {
                 continuation.resume(returning: nil)
             }
         }
     }
 
-    /// Restarts the core with the new config.json. Returns the error text, if any.
+    /// Restarts the core with the new config.json, or with the state handed
+    /// over. Returns the error text, if any.
     func reload() async -> String? {
-        guard let reply = await send(.reload) else { return nil }
+        let reply: Data?
+        if !Self.usesSystemProxy, let message = try? handoff?()?.message() {
+            reply = await sendToTunnel(message)
+        } else {
+            reply = await send(.reload)
+        }
+        guard let reply else { return nil }
         return reply.isEmpty ? nil : String(decoding: reply, as: UTF8.self)
     }
 

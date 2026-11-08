@@ -21,8 +21,8 @@ android {
         applicationId = "app.litetunnel"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.1.5"
+        versionCode = 7
+        versionName = "0.1.6"
         // libbox.aar is built for these two only (scripts/build-libbox-android.sh).
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
         // Shown in Settings; reading Libbox.version() would start the Go runtime in the UI.

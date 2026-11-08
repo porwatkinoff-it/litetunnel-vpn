@@ -3,7 +3,8 @@ import LiteKit
 import SwiftUI
 
 /// The app's state: servers, subscriptions and settings, saved to the App
-/// Group where the tunnel reads its config.
+/// Group where the tunnel reads its config. Without the group the app keeps
+/// them in its own folder and hands them to the tunnel (`TunnelHandoff`).
 ///
 /// Nothing here runs on a timer. Subscriptions update when the app opens or
 /// the system grants a background refresh, rule-sets once a week, and pings
@@ -24,7 +25,9 @@ final class AppModel: ObservableObject {
 
     let store: SharedStore
     let vpn: VPNController
-    let hasAppGroup: Bool
+    /// The App Group `store` is in; nil when the signature has none.
+    let appGroup: String?
+    var hasAppGroup: Bool { appGroup != nil }
 
     struct Banner: Identifiable, Equatable {
         let id = UUID()
@@ -34,24 +37,24 @@ final class AppModel: ObservableObject {
 
     init(vpn: VPNController) {
         self.vpn = vpn
-        if let shared = SharedStore.shared() {
-            store = shared
-            hasAppGroup = true
-            Self.adoptLocalState(into: shared)
+        if let opened = SharedStore.openGroup() {
+            store = opened.store
+            appGroup = opened.group
+            Self.adoptLocalState(into: opened.store)
         } else {
-            // Unsigned builds have no App Group. The app still works for
-            // editing; the tunnel cannot read this folder.
-            store = Self.localStore
-            hasAppGroup = false
+            // Unsigned builds, and some re-signed ones, have no App Group.
+            // The tunnel cannot read this folder, so it gets the state with
+            // every start and reload instead.
+            store = SharedStore.local
+            appGroup = nil
         }
         try? store.prepareDirectories()
         state = store.loadState()
         if state.syncAutoGroups() { try? store.save(state) }
-    }
-
-    private static var localStore: SharedStore {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return SharedStore(container: support.appendingPathComponent("LiteTunnel", isDirectory: true))
+        vpn.handoff = { [weak self] in
+            guard let self else { return nil }
+            return self.store.handoff(for: self.state, appGroup: self.appGroup)
+        }
     }
 
     /// An earlier run that found no App Group kept its subscriptions in the
@@ -59,7 +62,7 @@ final class AppModel: ObservableObject {
     /// what the group holds, so they are not lost once the group opens.
     private static func adoptLocalState(into shared: SharedStore) {
         let fm = FileManager.default
-        let local = localStore.stateURL
+        let local = SharedStore.local.stateURL
         func modified(_ url: URL) -> Date? {
             (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         }
@@ -122,10 +125,6 @@ final class AppModel: ObservableObject {
         }
         guard state.selectedServer != nil else {
             show("Сначала выберите сервер", error: true)
-            return
-        }
-        guard hasAppGroup else {
-            show("Подпись без App Group: туннель не сможет прочитать настройки. Подпишите приложение профилем, в котором есть App Group.", error: true)
             return
         }
         applyConfig()

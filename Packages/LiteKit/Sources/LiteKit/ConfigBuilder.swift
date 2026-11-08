@@ -200,6 +200,8 @@ public enum RuleSets {
     public static let geoipRU = "geoip-ru"
     public static let geositeRU = "geosite-category-ru"
     public static let ads = "geosite-category-ads-all"
+    /// Every tag the app downloads; nothing else is written as a file.
+    public static let all: Set<String> = [geoipRU, geositeRU, ads]
 
     /// Primary source first, then a CDN mirror.
     public static func urls(for tag: String) -> [URL] {

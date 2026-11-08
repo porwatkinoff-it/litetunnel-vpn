@@ -7,12 +7,19 @@ import os
 /// Runs the sing-box core for the server the app selected.
 ///
 /// The app writes `config.json` to the App Group; this extension only reads it.
+/// A signature without the group (some re-signing tools drop it) leaves the
+/// two no shared folder: then the tunnel runs the state the app hands over
+/// when it starts the tunnel and with every reload (`TunnelHandoff`), and
+/// keeps it in its own folder.
 /// Nothing here polls: speed and logs are read from the core only while the
 /// app is on screen and asking (see `StatusReader`), and on iOS the core pauses
 /// its timers while the device sleeps.
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let queue = DispatchQueue(label: "litetunnel.tunnel", qos: .userInitiated)
     private var store: SharedStore?
+    /// True when the tunnel shares no App Group with the app and runs what
+    /// the app handed over.
+    private var ownFolder = false
     private var server: LibboxCommandServer?
     private var platform: PlatformInterface?
     private var statusReader: StatusReader?
@@ -27,7 +34,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         queue.async {
             do {
-                try self.start()
+                try self.start(options: options)
                 completionHandler(nil)
             } catch {
                 Self.log.error("start failed: \(error.localizedDescription, privacy: .public)")
@@ -44,13 +51,24 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    private func start() throws {
-        guard let store = SharedStore.shared() else {
-            throw TunnelError("Нет доступа к общей папке App Group. Проверьте подпись приложения и расширения.")
+    private func start(options: [String: NSObject]?) throws {
+        // Only a start from the app has options. One the system makes alone
+        // reads the group, or else what the app handed over last time.
+        let handoff = try (options?[TunnelHandoff.optionKey] as? Data).map { try TunnelHandoff(encoded: $0) }
+        let store: SharedStore
+        if let shared = SharedStore.openGroup(), handoff == nil || handoff?.appGroup == shared.group {
+            store = shared.store
+            ownFolder = false
+            try store.prepareDirectories()
+            try Self.setupCore(store, basePath: store.container.path)
+        } else {
+            store = SharedStore.local
+            ownFolder = true
+            if let handoff { try store.apply(handoff) }
+            try store.prepareDirectories()
+            try Self.setupCore(store, basePath: Self.shortBasePath(fallback: store.container))
         }
         self.store = store
-        try store.prepareDirectories()
-        try Self.setupCore(store)
 
         let config: String
         do {
@@ -83,10 +101,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         #endif
     }
 
-    private static func setupCore(_ store: SharedStore) throws {
+    /// The core's command socket lives in its base folder, and a socket path
+    /// has to fit in 103 bytes. The extension's own Application Support
+    /// folder is longer than that; its tmp folder, without the `/private`
+    /// that `/var` links to, is not.
+    private static func shortBasePath(fallback: URL) -> String {
+        var path = FileManager.default.temporaryDirectory.path
+        if path.hasPrefix("/private/var/") { path.removeFirst("/private".count) }
+        if path.hasSuffix("/") { path.removeLast() }
+        guard (path + "/command.sock").utf8.count < 104 else { return fallback.path }
+        return path
+    }
+
+    private static func setupCore(_ store: SharedStore, basePath: String) throws {
         guard !didSetup else { return }
         let options = LibboxSetupOptions()
-        options.basePath = store.container.path
+        options.basePath = basePath
         options.workingPath = store.workingDirectory.path
         options.tempPath = store.tempDirectory.path
         options.logMaxLines = StatusReader.maxLogLines
@@ -117,8 +147,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     /// Re-reads config.json and restarts the core in place, keeping the tunnel up.
-    private func reload() throws {
+    /// `handoff` is the app's new state; it is used only without a shared group.
+    private func reload(_ handoff: TunnelHandoff? = nil) throws {
         guard let store, let server else { throw TunnelError("Туннель не запущен") }
+        if let handoff, ownFolder { try store.apply(handoff) }
         let config: String
         do {
             config = try store.readConfig()
@@ -130,6 +162,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
+        if let handoff = TunnelHandoff(message: messageData) {
+            queue.async {
+                do {
+                    try self.reload(handoff)
+                    completionHandler?(Data())
+                } catch {
+                    completionHandler?(Data(error.localizedDescription.utf8))
+                }
+            }
+            return
+        }
         guard let command = TunnelCommand(data: messageData) else {
             completionHandler?(nil)
             return

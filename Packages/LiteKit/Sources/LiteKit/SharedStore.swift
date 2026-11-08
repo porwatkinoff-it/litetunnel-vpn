@@ -29,12 +29,24 @@ public struct SharedStore: Sendable {
     /// container. The app and the tunnel read the same profiles in the same
     /// order, so they land in the same group.
     public static func shared(bundle: Bundle = .main) -> SharedStore? {
+        openGroup(bundle: bundle)?.store
+    }
+
+    /// `shared()`, and which group it opened.
+    public static func openGroup(bundle: Bundle = .main) -> (group: String, store: SharedStore)? {
         for group in candidateGroups(bundle: bundle) {
             if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) {
-                return SharedStore(container: url)
+                return (group, SharedStore(container: url))
             }
         }
         return nil
+    }
+
+    /// The process's own folder, for when the signature has no App Group:
+    /// the app keeps its state here, and the tunnel what the app handed it.
+    public static var local: SharedStore {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return SharedStore(container: support.appendingPathComponent("LiteTunnel", isDirectory: true))
     }
 
     static func candidateGroups(bundle: Bundle) -> [String] {
@@ -111,6 +123,36 @@ public struct SharedStore: Sendable {
 
     public func readConfig() throws -> String {
         try String(contentsOf: configURL, encoding: .utf8)
+    }
+
+    // MARK: without an App Group
+
+    /// The state and the rule-sets its config uses, for a tunnel that cannot
+    /// read this folder. `appGroup` is the group this folder is in, if any.
+    public func handoff(for state: AppState, appGroup: String?) -> TunnelHandoff {
+        var ruleSets: [String: Data] = [:]
+        for tag in RuleSets.needed(for: state.settings) {
+            if let data = try? Data(contentsOf: ruleSetDirectory.appendingPathComponent("\(tag).srs")), RuleSets.looksValid(data) {
+                ruleSets[tag] = data
+            }
+        }
+        return TunnelHandoff(state: state, ruleSets: ruleSets, appGroup: appGroup)
+    }
+
+    /// The tunnel's side: keeps what the app handed over and builds the
+    /// config from it, with the rule-sets in this folder. Rule-sets the app
+    /// did not send are removed, so the config never uses a stale one.
+    public func apply(_ handoff: TunnelHandoff) throws {
+        try prepareDirectories()
+        let fm = FileManager.default
+        for tag in RuleSets.available(in: ruleSetDirectory) where handoff.ruleSets[tag] == nil {
+            try? fm.removeItem(at: ruleSetDirectory.appendingPathComponent("\(tag).srs"))
+        }
+        for (tag, data) in handoff.ruleSets where RuleSets.all.contains(tag) && RuleSets.looksValid(data) {
+            try data.write(to: ruleSetDirectory.appendingPathComponent("\(tag).srs"), options: .atomic)
+        }
+        try save(handoff.state)
+        try writeConfig(for: handoff.state)
     }
 
     static let encoder: JSONEncoder = {
