@@ -56,7 +56,7 @@ public sealed partial class App : Application
         window.Closed += (_, _) => { if (!quitting) desktop.Shutdown(); };
         window.PropertyChanged += (_, e) =>
         {
-            // Back from the tray: refresh what is due, as at launch.
+            // Back from the tray: the same checks as at launch.
             if (e.Property == Visual.IsVisibleProperty && e.NewValue is true) _ = model.DidBecomeActiveAsync();
         };
 

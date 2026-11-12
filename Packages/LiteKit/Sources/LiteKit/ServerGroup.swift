@@ -9,9 +9,10 @@ import Foundation
 public enum ServerGroup {
     static let type = "urltest"
     /// sing-box tests every 3 minutes by default, one request per member.
-    /// Rarer tests cost fewer wake-ups; a dead member is still left on the
-    /// next test or the next failed connection.
-    static let interval = "10m"
+    /// Rarer tests cost fewer wake-ups, but a member that died stays picked
+    /// until the next test. The tunnel also tests right after it starts and
+    /// when the app opens, see `StatusReader.groupChanged`.
+    static let interval = "5m"
     /// The row the app adds to a subscription itself. Marked in the outbound,
     /// which keeps the saved state readable by older builds; the mark and the
     /// member names never reach the core, see `outbounds(_:tag:)`.
@@ -102,6 +103,15 @@ extension Server {
 
     /// The row the app added, as opposed to a group from the provider.
     public var isAuto: Bool { outbound[ServerGroup.autoKey]?.boolValue == true }
+
+    /// The member behind a tag the core reports as picked ("proxy-3" is the
+    /// third); nil for other tags and for a single server.
+    public func member(tagged tag: String) -> Server? {
+        let prefix = ConfigBuilder.proxyTag + "-"
+        guard tag.hasPrefix(prefix), let number = Int(tag.dropFirst(prefix.count)) else { return nil }
+        let all = members
+        return all.indices.contains(number - 1) ? all[number - 1] : nil
+    }
 
     /// The servers of a group, each as its own Server; empty for a single server.
     public var members: [Server] {

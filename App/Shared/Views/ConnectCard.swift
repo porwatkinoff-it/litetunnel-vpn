@@ -44,7 +44,7 @@ struct ConnectCard: View {
                     Text(server.name)
                         .font(.callout)
                         .lineLimit(1)
-                    Text(server.isGroup ? server.detail : server.proto.title)
+                    Text(Self.detail(of: server, picked: vpn.status == .connected ? vpn.traffic.selected : nil))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -61,6 +61,13 @@ struct ConnectCard: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .trafficPolling()
+    }
+
+    /// Under the server's name. A connected group says which member it runs on.
+    private static func detail(of server: Server, picked: String?) -> String {
+        guard server.isGroup else { return server.proto.title }
+        if let picked, let member = server.member(tagged: picked) { return "Сейчас: \(member.name)" }
+        return server.detail
     }
 
     private var tint: Color {

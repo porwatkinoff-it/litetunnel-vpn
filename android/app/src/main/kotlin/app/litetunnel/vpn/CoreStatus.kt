@@ -18,6 +18,7 @@ import io.nekohasekai.libbox.OutboundGroupItemIterator
 import io.nekohasekai.libbox.OutboundGroupIterator
 import io.nekohasekai.libbox.StatusMessage
 import io.nekohasekai.libbox.StringIterator
+import app.litetunnel.core.ConfigBuilder
 import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,13 +35,18 @@ data class LogLine(val level: Int, val text: String) {
 }
 
 /**
- * Traffic and log lines of the running core, read from its command socket only
- * while a screen that shows them is on screen. With the app in the background
+ * Traffic, log lines and the server a group runs on, read from the running
+ * core's command socket only while a screen that shows them is on screen. With the app in the background
  * there is no client, and the core sends nothing.
  */
 object CoreStatus {
     private val _traffic = MutableStateFlow<Traffic?>(null)
     val traffic: StateFlow<Traffic?> = _traffic.asStateFlow()
+
+    private val _selected = MutableStateFlow<String?>(null)
+
+    /** The outbound tag the auto-select group runs on now; null without a group. */
+    val selected: StateFlow<String?> = _selected.asStateFlow()
 
     private val _logs = MutableStateFlow<List<LogLine>>(emptyList())
 
@@ -77,6 +83,7 @@ object CoreStatus {
         val options = CommandClientOptions().apply {
             addCommand(Libbox.CommandStatus)
             addCommand(Libbox.CommandLog)
+            addCommand(Libbox.CommandGroup)
             setStatusInterval(1_000_000_000L)
         }
         val listener = Listener()
@@ -96,6 +103,7 @@ object CoreStatus {
         val running = client ?: return
         client = null
         _traffic.value = null
+        _selected.value = null
         worker.execute { runCatching { running.disconnect() } }
     }
 
@@ -104,6 +112,7 @@ object CoreStatus {
         if (client !== which) return
         client = null
         _traffic.value = null
+        _selected.value = null
         if (users > 0) main.postDelayed(retry, 2_000)
     }
 
@@ -153,7 +162,14 @@ object CoreStatus {
 
         override fun writeConnectionEvents(events: ConnectionEvents) = Unit
 
-        override fun writeGroups(groups: OutboundGroupIterator) = Unit
+        override fun writeGroups(groups: OutboundGroupIterator) {
+            var picked: String? = null
+            while (groups.hasNext()) {
+                val group = groups.next()
+                if (group.tag == ConfigBuilder.PROXY_TAG) picked = group.selected.ifEmpty { null }
+            }
+            _selected.value = picked
+        }
 
         override fun writeOutbounds(outbounds: OutboundGroupItemIterator) = Unit
     }

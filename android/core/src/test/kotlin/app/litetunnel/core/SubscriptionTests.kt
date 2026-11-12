@@ -312,8 +312,20 @@ class SubscriptionTests {
         val outbounds = ConfigBuilder.build(state.servers[0], AppSettings(), null)["outbounds"]?.array.orEmpty()
         assertEquals(listOf("proxy", "proxy-1", "proxy-2", "direct"), outbounds.mapNotNull { it["tag"]?.string })
         assertEquals("urltest", outbounds[0]["type"]?.string)
-        assertEquals("10m", outbounds[0]["interval"]?.string)
+        assertEquals("5m", outbounds[0]["interval"]?.string)
         assertNull(outbounds[0]["auto"])
+    }
+
+    @Test
+    fun pickedMemberOfAGroupByTag() {
+        val (state) = subscribed(parsed("a", "b"))
+        val auto = state.servers[0].outbound
+        assertEquals("a", ServerGroup.memberName(auto, "proxy", "proxy-1"))
+        assertEquals("b", ServerGroup.memberName(auto, "proxy", "proxy-2"))
+        assertNull(ServerGroup.memberName(auto, "proxy", "proxy-3"))
+        assertNull(ServerGroup.memberName(auto, "proxy", "proxy"))
+        assertNull(ServerGroup.memberName(auto, "proxy", "direct"))
+        assertNull(ServerGroup.memberName(state.servers[1].outbound, "proxy", "proxy-1"))
     }
 
     @Test

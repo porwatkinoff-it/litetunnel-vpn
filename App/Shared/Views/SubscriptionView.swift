@@ -51,7 +51,7 @@ struct SubscriptionView: View {
 
                 Section {
                     Stepper(value: $draft.updateIntervalHours, in: 1...168) {
-                        LabeledContent("Обновлять каждые", value: "\(draft.updateIntervalHours) ч")
+                        LabeledContent("Обновлять в фоне каждые", value: "\(draft.updateIntervalHours) ч")
                     }
                     TextField("User-Agent", text: $userAgent, prompt: Text(SubscriptionClient.defaultUserAgent))
                         .autocorrectionDisabled()
@@ -61,7 +61,7 @@ struct SubscriptionView: View {
                 } header: {
                     Text("Обновление")
                 } footer: {
-                    Text("Обновляется при открытии приложения и в фоне, когда система разрешит. Некоторые провайдеры отдают разные списки разным клиентам: тогда поможет другой User-Agent.")
+                    Text("Обновляется в фоне, когда система разрешит, и по кнопке обновления. При открытии приложения не обновляется. Некоторые провайдеры отдают разные списки разным клиентам: тогда поможет другой User-Agent.")
                 }
 
                 Section("Состояние") {

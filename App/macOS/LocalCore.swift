@@ -47,6 +47,7 @@ final class LocalCore: NSObject, @unchecked Sendable {
                 throw error
             }
             self.statusReader = StatusReader()
+            self.statusReader?.groupChanged(isGroup: Self.isGroup(store))
             return port
         }
     }
@@ -85,6 +86,7 @@ final class LocalCore: NSObject, @unchecked Sendable {
                     continuation.resume(returning: try? JSONEncoder().encode(lines))
                 case .wake:
                     self.server?.wakeNow()
+                    self.statusReader?.refreshGroup()
                     continuation.resume(returning: nil)
                 }
             }
@@ -110,6 +112,11 @@ final class LocalCore: NSObject, @unchecked Sendable {
     private func reload() throws {
         guard let store, let server else { throw VPNError("Прокси не запущен") }
         try server.startOrReloadService(try Self.config(store, port: port), options: LibboxOverrideOptions())
+        statusReader?.groupChanged(isGroup: Self.isGroup(store))
+    }
+
+    private static func isGroup(_ store: SharedStore) -> Bool {
+        store.loadState().selectedServer?.isGroup == true
     }
 
     private func onQueue<T>(_ body: @escaping () throws -> T) async throws -> T {

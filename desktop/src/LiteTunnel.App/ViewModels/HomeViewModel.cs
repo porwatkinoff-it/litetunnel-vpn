@@ -20,6 +20,8 @@ public sealed class HomeViewModel : PageViewModel
     private CancellationTokenSource? traffic;
     private bool onScreen;
     private long upSpeed, downSpeed, upTotal, downTotal;
+    private string? picked;
+    private int ticks;
 
     public HomeViewModel(MainViewModel main) : base(main)
     {
@@ -37,6 +39,7 @@ public sealed class HomeViewModel : PageViewModel
         Model.StateChanged += Rebuild;
         Model.PropertyChanged += OnModelChanged;
         Model.Connection.Changed += OnConnectionChanged;
+        Model.Connection.GroupTested += () => _ = ReadPickedAsync();
         Rebuild();
     }
 
@@ -81,9 +84,32 @@ public sealed class HomeViewModel : PageViewModel
 
     public string ServerName => Model.State.SelectedServer?.Name ?? "Сервер не выбран";
 
-    public string ServerProto => Model.State.SelectedServer is { } server
-        ? server.IsGroup ? server.Detail : server.Proto.Title()
-        : "";
+    /// <summary>Under the name: for a running group the server it picked, «Сейчас: …».</summary>
+    public string ServerProto
+    {
+        get
+        {
+            if (Model.State.SelectedServer is not { } server) return "";
+            if (!server.IsGroup) return server.Proto.Title();
+            return IsOn && picked is not null && ServerGroup.MemberName(server.Outbound, ConfigBuilder.ProxyTag, picked) is { } name
+                ? $"Сейчас: {name}"
+                : server.Detail;
+        }
+    }
+
+    /// <summary>Asks the core which member the group runs on. Only while the card is on screen.</summary>
+    private async Task ReadPickedAsync()
+    {
+        string? now = null;
+        if (onScreen && IsOn && Model.Connection.Api is { } api && Model.State.SelectedServer?.IsGroup == true)
+        {
+            using var http = StatusApi.Client();
+            now = await api.SelectedAsync(http, ConfigBuilder.ProxyTag);
+        }
+        if (now == picked) return;
+        picked = now;
+        Raise(nameof(ServerProto));
+    }
 
     public bool ShowTraffic => IsOn;
 
@@ -143,8 +169,15 @@ public sealed class HomeViewModel : PageViewModel
         bool wanted = onScreen && IsOn && Model.Connection.Api is not null;
         if (wanted && clock is null)
         {
-            clock = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => Raise(nameof(Elapsed)));
+            ticks = 0;
+            clock = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) =>
+            {
+                Raise(nameof(Elapsed));
+                // The pick changes rarely; a look every few seconds keeps the card honest.
+                if (++ticks % PickedEvery == 0) _ = ReadPickedAsync();
+            });
             clock.Start();
+            _ = ReadPickedAsync();
             WatchTraffic(Model.Connection.Api!);
         }
         else if (!wanted && clock is not null)
@@ -153,8 +186,11 @@ public sealed class HomeViewModel : PageViewModel
             clock = null;
             traffic?.Cancel();
             traffic = null;
+            _ = ReadPickedAsync();
         }
     }
+
+    private const int PickedEvery = 5;
 
     private async void WatchTraffic(StatusApi api)
     {

@@ -6,9 +6,9 @@ import SwiftUI
 /// Group where the tunnel reads its config. Without the group the app keeps
 /// them in its own folder and hands them to the tunnel (`TunnelHandoff`).
 ///
-/// Nothing here runs on a timer. Subscriptions update when the app opens or
-/// the system grants a background refresh, rule-sets once a week, and pings
-/// only when asked.
+/// Nothing here runs on a timer. Subscriptions update when asked or when the
+/// system grants a background refresh, never just because the app opened;
+/// rule-sets once a week, and pings only when asked.
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var state: AppState
@@ -250,8 +250,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Subscriptions whose interval has passed. Called on open and from
-    /// background refresh.
+    /// Subscriptions whose interval has passed. Called from background refresh.
     func refreshDue(ping: Bool = true) async {
         let now = Date()
         let due = state.subscriptions.filter { $0.isDue(at: now) }.map(\.id)
@@ -347,8 +346,6 @@ final class AppModel: ObservableObject {
         defer { activating = false }
         await vpn.load()
         if vpn.isActive { await vpn.send(.wake) }
-        // Pinging everything right after covers the updated ones too.
-        await refreshDue(ping: !state.settings.pingOnOpen)
         await updateRuleSets(force: false)
         if state.settings.pingOnOpen { await pingAll() }
     }

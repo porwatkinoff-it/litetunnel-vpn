@@ -19,11 +19,18 @@ final class StatusReader: NSObject, LibboxCommandClientHandlerProtocol {
     private var lastRequest = DispatchTime.now()
     private var latest = TunnelStatus()
     private var lines: [String] = []
+    /// Whether the running config is an auto-select group.
+    private var isGroup = false
+    private var selected: String?
+    private var lastGroupTest = DispatchTime(uptimeNanoseconds: 0)
+    private var groupGeneration = 0
 
     func status() -> TunnelStatus {
         queue.sync {
             touch()
-            return latest
+            var status = latest
+            status.selected = isGroup ? selected : nil
+            return status
         }
     }
 
@@ -34,11 +41,50 @@ final class StatusReader: NSObject, LibboxCommandClientHandlerProtocol {
         }
     }
 
+    /// The core started or reloaded. An auto-select group is tested again a
+    /// little later: the core's own first test can run before the network is
+    /// up, fail for every member and leave the first one picked until the
+    /// next test.
+    func groupChanged(isGroup: Bool) {
+        queue.sync {
+            self.isGroup = isGroup
+            selected = nil
+            groupGeneration += 1
+            guard isGroup else { return }
+            let generation = groupGeneration
+            for delay in [3, 20] {
+                queue.asyncAfter(deadline: .now() + .seconds(delay)) { [weak self] in
+                    guard let self, self.groupGeneration == generation else { return }
+                    self.testGroup()
+                }
+            }
+        }
+    }
+
+    /// The app opened: test the group unless it was tested in the last minute.
+    func refreshGroup() {
+        queue.sync {
+            if .now() > lastGroupTest + .seconds(60) { testGroup() }
+        }
+    }
+
     func stop() {
         queue.sync { disconnect() }
     }
 
     // MARK: on `queue`
+
+    private func testGroup() {
+        guard isGroup else { return }
+        lastGroupTest = .now()
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                try LibboxNewStandaloneCommandClient()?.urlTest(ConfigBuilder.proxyTag)
+            } catch {
+                Self.log.error("group test: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
 
     private func touch() {
         lastRequest = .now()
@@ -46,6 +92,7 @@ final class StatusReader: NSObject, LibboxCommandClientHandlerProtocol {
         let options = LibboxCommandClientOptions()
         options.addCommand(LibboxCommandStatus)
         options.addCommand(LibboxCommandLog)
+        options.addCommand(LibboxCommandGroup)
         options.statusInterval = Int64(NSEC_PER_SEC)
         guard let client = LibboxNewCommandClient(self, options) else { return }
         self.client = client
@@ -124,6 +171,13 @@ final class StatusReader: NSObject, LibboxCommandClientHandlerProtocol {
     func initializeClashMode(_ modeList: LibboxStringIteratorProtocol?, currentMode: String?) {}
     func updateClashMode(_ newMode: String?) {}
     func write(_ events: LibboxConnectionEvents?) {}
-    func writeGroups(_ message: LibboxOutboundGroupIteratorProtocol?) {}
+    func writeGroups(_ message: LibboxOutboundGroupIteratorProtocol?) {
+        guard let message else { return }
+        var picked: String?
+        while message.hasNext() {
+            if let group = message.next(), group.tag == ConfigBuilder.proxyTag { picked = group.selected }
+        }
+        queue.async { self.selected = picked?.isEmpty == false ? picked : nil }
+    }
     func writeOutbounds(_ message: LibboxOutboundGroupItemIteratorProtocol?) {}
 }

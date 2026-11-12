@@ -22,6 +22,9 @@ public sealed class Connection
     private ConnectionMode mode;
     private bool excludeLocal;
     private int proxyPort;
+    private bool isGroup;
+    private int groupGeneration;
+    private DateTimeOffset lastGroupTest;
 
     public Connection(Store store, string singBox)
     {
@@ -128,8 +131,46 @@ public sealed class Connection
         }
         ConnectedSince = DateTimeOffset.Now;
         SetStatus(ConnectionStatus.Connected);
+        GroupChanged(state);
         return null;
     }
+
+    /// <summary>
+    /// The core's first test of a group can run before the network is up: then
+    /// every member fails and the first one stays picked until the next test.
+    /// So test again a moment after each start and reload.
+    /// </summary>
+    private void GroupChanged(AppState state)
+    {
+        isGroup = state.SelectedServer?.IsGroup == true;
+        int generation = ++groupGeneration;
+        if (!isGroup) return;
+        foreach (int seconds in new[] { 3, 20 }) _ = TestGroupAfterAsync(TimeSpan.FromSeconds(seconds), generation);
+    }
+
+    private async Task TestGroupAfterAsync(TimeSpan delay, int generation)
+    {
+        await Task.Delay(delay);
+        if (generation == groupGeneration) TestGroup();
+    }
+
+    /// <summary>The window came back: test the group again, once a minute at most.</summary>
+    public void RefreshGroup()
+    {
+        if (DateTimeOffset.UtcNow - lastGroupTest > TimeSpan.FromMinutes(1)) TestGroup();
+    }
+
+    private async void TestGroup()
+    {
+        if (!isGroup || Status != ConnectionStatus.Connected || Api is not { } api) return;
+        lastGroupTest = DateTimeOffset.UtcNow;
+        using var http = StatusApi.Client();
+        await api.TestGroupAsync(http, ConfigBuilder.ProxyTag);
+        GroupTested?.Invoke();
+    }
+
+    /// <summary>The core tested the group anew: its pick may have changed.</summary>
+    public event Action? GroupTested;
 
     /// <summary>Starts the process and waits until it listens. The error otherwise; the core is stopped then.</summary>
     private async Task<string?> LaunchAsync(CancellationToken cancellation)
@@ -225,7 +266,11 @@ public sealed class Connection
                 try { proxy.Enable(proxyPort, excludeLocal); }
                 catch (SystemProxyException e) { return e.Message; }
             }
-            if (core is { } running && running.Reload()) return null;
+            if (core is { } running && running.Reload())
+            {
+                GroupChanged(state);
+                return null;
+            }
 
             SetStatus(ConnectionStatus.Reasserting);
             await StopCoreAsync();
@@ -236,6 +281,7 @@ public sealed class Connection
                 return error.Length == 0 ? null : error;
             }
             SetStatus(ConnectionStatus.Connected);
+            GroupChanged(state);
             return null;
         }
         finally
@@ -272,6 +318,8 @@ public sealed class Connection
 
     private void Reset()
     {
+        isGroup = false;
+        groupGeneration++;
         Api = null;
         ConnectedSince = null;
         SetStatus(ConnectionStatus.Disconnected);

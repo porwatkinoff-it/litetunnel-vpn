@@ -76,7 +76,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         } catch {
             throw TunnelError("Сервер не выбран")
         }
-        smartSleep = store.loadState().settings.smartSleep
+        let state = store.loadState()
+        smartSleep = state.settings.smartSleep
 
         let killSwitch = (protocolConfiguration as? NETunnelProviderProtocol)?.includeAllNetworks ?? false
         let platform = PlatformInterface(provider: self, includeAllNetworks: killSwitch)
@@ -89,6 +90,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         try server.start()
         try server.startOrReloadService(config, options: LibboxOverrideOptions())
         statusReader = StatusReader()
+        statusReader?.groupChanged(isGroup: state.selectedServer?.isGroup == true)
 
         #if os(iOS)
         // The core ignores `wake()` on iOS: the extension is woken for every
@@ -157,8 +159,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         } catch {
             throw TunnelError("Сервер не выбран")
         }
-        smartSleep = store.loadState().settings.smartSleep
+        let state = store.loadState()
+        smartSleep = state.settings.smartSleep
         try server.startOrReloadService(config, options: LibboxOverrideOptions())
+        statusReader?.groupChanged(isGroup: state.selectedServer?.isGroup == true)
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
@@ -194,6 +198,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler?(try? JSONEncoder().encode(lines))
             case .wake:
                 self.server?.wakeNow()
+                self.statusReader?.refreshGroup()
                 completionHandler?(nil)
             }
         }

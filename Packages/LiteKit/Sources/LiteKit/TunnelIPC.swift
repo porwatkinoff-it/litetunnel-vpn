@@ -13,7 +13,8 @@ public enum TunnelCommand: String, Sendable {
     case status
     /// Reply: `[String]`, the latest log lines, as JSON.
     case logs
-    /// The app came to the foreground: end the core's sleep pause now.
+    /// The app came to the foreground: end the core's sleep pause now, and
+    /// test an auto-select group again if the last test is not fresh.
     case wake
 
     public var data: Data { Data(rawValue.utf8) }
@@ -32,6 +33,9 @@ public struct TunnelStatus: Codable, Hashable, Sendable {
     /// Bytes used by the core.
     public var memory: Int64 = 0
     public var connections: Int32 = 0
+    /// The outbound tag the auto-select group runs on now; nil for a single
+    /// server and until the core has said. See `Server.member(tagged:)`.
+    public var selected: String?
 
     public init() {}
 }

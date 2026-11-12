@@ -318,13 +318,6 @@ public sealed class AppModel : Observable
         }
     }
 
-    /// <summary>Subscriptions whose interval has passed. Only at launch and when the window comes back: no timers.</summary>
-    public async Task RefreshDueAsync(bool ping = true)
-    {
-        var now = DateTimeOffset.UtcNow;
-        foreach (var id in State.Subscriptions.Where(s => s.IsDue(now)).Select(s => s.Id).ToList()) await RefreshAsync(id, ping);
-    }
-
     // MARK: ping
 
     public async Task PingAsync(IReadOnlyList<Server> rows)
@@ -415,15 +408,14 @@ public sealed class AppModel : Observable
 
     // MARK: lifecycle
 
-    /// <summary>At launch and when the window comes back from the tray.</summary>
+    /// <summary>At launch and when the window comes back from the tray. Subscriptions are not refreshed here: only by the button.</summary>
     public async Task DidBecomeActiveAsync()
     {
         if (activating) return;
         activating = true;
         try
         {
-            // Pinging everything right after covers the updated ones too.
-            await RefreshDueAsync(ping: !Settings.PingOnOpen);
+            Connection.RefreshGroup();
             await UpdateRuleSetsAsync(force: false);
             if (Settings.PingOnOpen) await PingAllAsync();
         }

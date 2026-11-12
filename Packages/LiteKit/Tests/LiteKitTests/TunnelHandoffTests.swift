@@ -98,4 +98,24 @@ final class TunnelHandoffTests: XCTestCase {
         try tunnel.apply(TunnelHandoff(state: empty))
         XCTAssertThrowsError(try tunnel.readConfig())
     }
+
+    func testPickedMemberOfAGroupByTag() throws {
+        let a: JSONValue = ["type": "vless", "tag": "Берлин", "server": "a.example", "server_port": 443]
+        let b: JSONValue = ["type": "vless", "tag": "Хельсинки", "server": "b.example", "server_port": 443]
+        let parsed = ParsedServer(name: "Авто-выбор", proto: .vless, host: "a.example", port: 443,
+                                  outbound: ["type": "urltest", "outbounds": [a, b]], shareLink: nil)
+        let group = Server(subscriptionID: nil, parsed: parsed)
+        // The same tags ConfigBuilder gives the members.
+        let tags = ServerGroup.outbounds(group.outbound, tag: ConfigBuilder.proxyTag).dropFirst().compactMap { $0["tag"]?.stringValue }
+        XCTAssertEqual(tags.map { group.member(tagged: $0)?.name }, ["Берлин", "Хельсинки"])
+        XCTAssertNil(group.member(tagged: "proxy-3"))
+        XCTAssertNil(group.member(tagged: "proxy"))
+        XCTAssertNil(group.member(tagged: "direct"))
+        XCTAssertNil(group.members[0].member(tagged: "proxy-1"))
+    }
+
+    func testStatusFromAnOlderTunnelHasNoPickedServer() throws {
+        let old = Data(#"{"uplink":1,"downlink":2,"uplinkTotal":3,"downlinkTotal":4,"memory":5,"connections":6}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(TunnelStatus.self, from: old).selected)
+    }
 }

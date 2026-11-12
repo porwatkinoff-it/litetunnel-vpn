@@ -14,9 +14,10 @@ object ServerGroup {
     /**
      * sing-box tests every 3 minutes by default, one request per member.
      * Rarer tests cost fewer wake-ups; a dead member is still left on the
-     * next test or the next failed connection.
+     * next test. The service also tests right after a start and when the app
+     * opens, so a pick made before the network was up does not stay.
      */
-    const val INTERVAL = "10m"
+    const val INTERVAL = "5m"
 
     const val AUTO_NAME = "Авто-выбор"
 
@@ -79,6 +80,21 @@ object ServerGroup {
     fun members(outbound: Json): List<Json>? {
         if (outbound["type"]?.string != TYPE) return null
         return outbound["outbounds"]?.array
+    }
+
+    /**
+     * The name of the member the running group picked, by the tag the core
+     * reports ("proxy-2" with the group tagged "proxy"). Null for a single
+     * server or a tag that is not one of the members.
+     */
+    fun memberName(outbound: Json, tag: String, picked: String): String? {
+        val prefix = "$tag-"
+        if (!picked.startsWith(prefix)) return null
+        val number = picked.removePrefix(prefix).toIntOrNull() ?: return null
+        val member = members(outbound)?.getOrNull(number - 1) ?: return null
+        member["tag"]?.string?.let { return it }
+        val host = member["server"]?.string ?: return null
+        return member["server_port"]?.int?.let { "$host:$it" } ?: host
     }
 
     /** The outbounds to put in the config, the first of them tagged `tag`. */

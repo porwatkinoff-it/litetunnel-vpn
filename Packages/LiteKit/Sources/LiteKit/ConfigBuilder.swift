@@ -3,7 +3,7 @@ import Foundation
 /// Builds the sing-box config the tunnel runs.
 ///
 /// Power rules this file enforces: no selector groups, a urltest group only
-/// for a subscription's "Авто-выбор" entry and then tested every 10 minutes,
+/// for a subscription's "Авто-выбор" entry and then tested every 5 minutes,
 /// no remote rule-sets (they re-download on a timer), no clash API, log level
 /// from settings (warn by default).
 public enum ConfigBuilder {

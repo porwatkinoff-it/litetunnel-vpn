@@ -130,6 +130,11 @@ and a details button. Tap the row to select; long-press / right-click:
 Подробнее · Проверить пинг · Копировать ссылку · Удалить.
 
 Auto row: **Авто-выбор** over «Самый быстрый из N», first in its subscription.
+While connected through a group, the connect card shows «Сейчас: <server>»
+under its name: the member the core runs on now.
+Subscriptions never refresh when the app opens: by the refresh button, and on
+iOS and macOS in the background. Android, Windows and Linux have no «Обновлять
+каждые» row.
 Every subscription with two or more servers gets one, unless a group from the
 provider already holds all of them; a group that holds only some does not
 count. The core picks the lowest ping. A new subscription starts on this row;

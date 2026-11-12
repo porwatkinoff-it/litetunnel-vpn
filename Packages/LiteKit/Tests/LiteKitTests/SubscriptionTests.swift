@@ -290,7 +290,7 @@ final class SubscriptionTests: XCTestCase {
         let outbounds = config["outbounds"]?.arrayValue ?? []
         XCTAssertEqual(outbounds.compactMap { $0["tag"]?.stringValue }, ["proxy", "proxy-1", "proxy-2", "direct"])
         XCTAssertEqual(outbounds[0]["type"], "urltest")
-        XCTAssertEqual(outbounds[0]["interval"], "10m")
+        XCTAssertEqual(outbounds[0]["interval"], "5m")
         XCTAssertNil(outbounds[0]["auto"])
     }
 

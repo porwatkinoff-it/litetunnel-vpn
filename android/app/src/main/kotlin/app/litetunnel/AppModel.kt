@@ -294,16 +294,6 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /**
-     * Subscriptions whose interval has passed. Called when the app opens;
-     * `ping` is off when the open pings every server anyway.
-     */
-    private suspend fun refreshDue(ping: Boolean) {
-        val now = Instant.now()
-        val updated = state.subscriptions.filter { it.isDue(now) }.map { it.id }.filter { refreshNow(it) }
-        if (ping) pingAfterUpdate(updated)
-    }
-
     /** Launched, not awaited: an import returns once the servers are in. */
     private fun pingAfterUpdate(ids: List<UUID>) {
         if (!state.settings.pingOnUpdate || ids.isEmpty()) return
@@ -415,14 +405,13 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     private var activating = false
 
-    /** The app came to the screen. */
+    /** The app came to the screen. Subscriptions are not refreshed here: only by the button. */
     fun becameActive() {
         if (activating) return
         activating = true
         viewModelScope.launch {
             try {
                 if (Tunnel.state.value.isActive) VpnController.wake()
-                refreshDue(ping = !state.settings.pingOnOpen)
                 updateRuleSetsNow(force = false)
                 if (state.settings.pingOnOpen) pingNow(state.servers)
             } finally {

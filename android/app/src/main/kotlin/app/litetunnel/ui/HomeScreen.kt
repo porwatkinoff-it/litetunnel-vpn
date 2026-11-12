@@ -69,8 +69,10 @@ import androidx.lifecycle.repeatOnLifecycle
 import app.litetunnel.AppModel
 import app.litetunnel.R
 import app.litetunnel.Screen
+import app.litetunnel.core.ConfigBuilder
 import app.litetunnel.core.PingDisplay
 import app.litetunnel.core.Server
+import app.litetunnel.core.ServerGroup
 import app.litetunnel.core.Subscription
 import app.litetunnel.core.Usage
 import app.litetunnel.vpn.CoreStatus
@@ -201,7 +203,15 @@ private fun ConnectCard(tunnel: TunnelState, server: Server?, onToggle: () -> Un
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (server != null) {
                 Text(server.name, style = LiteType.callout, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (server.isGroup) server.detail else server.proto.title, style = LiteType.caption, color = Lite.colors.secondary)
+                val picked by CoreStatus.selected.collectAsState()
+                val running = picked?.takeIf { tunnel.status == TunnelStatus.CONNECTED }
+                    ?.let { ServerGroup.memberName(server.outbound, ConfigBuilder.PROXY_TAG, it) }
+                val detail = when {
+                    running != null -> "Сейчас: $running"
+                    server.isGroup -> server.detail
+                    else -> server.proto.title
+                }
+                Text(detail, style = LiteType.caption, color = Lite.colors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             } else {
                 Text("Сервер не выбран", style = LiteType.callout, color = Lite.colors.secondary)
             }

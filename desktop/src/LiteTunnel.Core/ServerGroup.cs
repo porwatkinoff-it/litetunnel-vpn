@@ -16,9 +16,27 @@ public static class ServerGroup
     /// <summary>
     /// sing-box tests every 3 minutes by default, one request per member.
     /// Rarer tests cost fewer wake-ups; a dead member is still left on the
-    /// next test or the next failed connection.
+    /// next test. The app also tests right after a start and when its window
+    /// opens, so a pick made before the network was up does not stay.
     /// </summary>
-    public const string Interval = "10m";
+    public const string Interval = "5m";
+
+    /// <summary>
+    /// The name of the member the running group picked, by the tag the core
+    /// reports ("proxy-2" with the group tagged "proxy"). Null for a single
+    /// server or a tag that is not one of the members.
+    /// </summary>
+    public static string? MemberName(Json outbound, string tag, string picked)
+    {
+        var prefix = tag + "-";
+        if (!picked.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        if (!int.TryParse(picked.AsSpan(prefix.Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int number)) return null;
+        if (Members(outbound) is not { } members || number < 1 || number > members.Count) return null;
+        var member = members[number - 1];
+        if (member["tag"]?.AsString is { } name) return name;
+        if (member["server"]?.AsString is not { } host) return null;
+        return member["server_port"]?.AsLong is { } port ? $"{host}:{port}" : host;
+    }
 
     public const string AutoName = "Авто-выбор";
 

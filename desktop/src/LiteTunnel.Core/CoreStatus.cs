@@ -74,8 +74,9 @@ public static class LocalPorts
 }
 
 /// <summary>
-/// The running core's clash API on loopback: speed and totals. The app reads
-/// it only while the window shows them; the core counts either way.
+/// The running core's clash API on loopback: speed, totals and the server an
+/// auto-select group runs on. The app reads it only while the window shows
+/// them; the core counts either way.
 /// </summary>
 public sealed record StatusApi(int Port, string Secret)
 {
@@ -108,6 +109,40 @@ public sealed record StatusApi(int Port, string Secret)
         catch (Exception e) when (e is HttpRequestException or IOException or JsonException || (e is OperationCanceledException && !cancellation.IsCancellationRequested))
         {
             return null;
+        }
+    }
+
+    /// <summary>The tag of the outbound the group runs on now; null when the core does not say.</summary>
+    public async Task<string?> SelectedAsync(HttpClient http, string group, CancellationToken cancellation = default)
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            using var response = await http.SendAsync(Request($"/proxies/{Uri.EscapeDataString(group)}"), timeout.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+            var json = Json.Parse(await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false));
+            return json["now"]?.AsString is { Length: > 0 } now ? now : null;
+        }
+        catch (Exception e) when (e is HttpRequestException or IOException or JsonException || (e is OperationCanceledException && !cancellation.IsCancellationRequested))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Has the core test every member of the group now and pick again. False when it did not.</summary>
+    public async Task<bool> TestGroupAsync(HttpClient http, string group, CancellationToken cancellation = default)
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            using var response = await http.SendAsync(Request($"/group/{Uri.EscapeDataString(group)}/delay?timeout=10000"), timeout.Token).ConfigureAwait(false);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception e) when (e is HttpRequestException or IOException || (e is OperationCanceledException && !cancellation.IsCancellationRequested))
+        {
+            return false;
         }
     }
 

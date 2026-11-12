@@ -315,8 +315,22 @@ public class SubscriptionTests
         var outbounds = ConfigBuilder.Build(state.Servers[0], new AppSettings(), null)["outbounds"]?.AsArray ?? [];
         Assert.Equal(["proxy", "proxy-1", "proxy-2", "direct"], outbounds.Select(o => o["tag"]?.AsString).OfType<string>());
         Assert.Equal("urltest", outbounds[0]["type"]?.AsString);
-        Assert.Equal("10m", outbounds[0]["interval"]?.AsString);
+        Assert.Equal("5m", outbounds[0]["interval"]?.AsString);
         Assert.Null(outbounds[0]["auto"]);
+    }
+
+    [Fact]
+    public void PickedMemberOfAGroupByTag()
+    {
+        var (state, _) = Subscribed(Named("a", "b"));
+        var auto = state.Servers[0].Outbound;
+        Assert.Equal("a", ServerGroup.MemberName(auto, "proxy", "proxy-1"));
+        Assert.Equal("b", ServerGroup.MemberName(auto, "proxy", "proxy-2"));
+        Assert.Null(ServerGroup.MemberName(auto, "proxy", "proxy-3"));
+        Assert.Null(ServerGroup.MemberName(auto, "proxy", "proxy-0"));
+        Assert.Null(ServerGroup.MemberName(auto, "proxy", "proxy"));
+        Assert.Null(ServerGroup.MemberName(auto, "proxy", "direct"));
+        Assert.Null(ServerGroup.MemberName(state.Servers[1].Outbound, "proxy", "proxy-1"));
     }
 
     [Fact]
