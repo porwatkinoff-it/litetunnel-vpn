@@ -217,7 +217,7 @@ public sealed class SystemProxy(string backupPath, IReadOnlyList<IProxyBackend> 
         {
             Directory.CreateDirectory(Path.GetDirectoryName(AutostartFile)!);
             File.WriteAllText(AutostartFile,
-                "[Desktop Entry]\nType=Application\nName=LiteTunnel: вернуть прокси\nNoDisplay=true\n" +
+                "[Desktop Entry]\nType=Application\nName=Link: вернуть прокси\nNoDisplay=true\n" +
                 $"Exec=\"{executable.Replace("\\", "\\\\").Replace("\"", "\\\"")}\" {RestoreArgument}\n");
         }
     }

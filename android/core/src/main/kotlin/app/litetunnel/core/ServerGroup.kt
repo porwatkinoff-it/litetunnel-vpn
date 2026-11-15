@@ -13,11 +13,18 @@ object ServerGroup {
 
     /**
      * sing-box tests every 3 minutes by default, one request per member.
-     * Rarer tests cost fewer wake-ups; a dead member is still left on the
-     * next test. The service also tests right after a start and when the app
-     * opens, so a pick made before the network was up does not stay.
+     * Rarer tests cost fewer wake-ups. The service fills the gaps: it tests
+     * right after a start, as soon as the picked server fails, and checks the
+     * pick when the screen comes on, see [GroupWatch].
      */
     const val INTERVAL = "5m"
+
+    /**
+     * Milliseconds another server has to be faster by before the core moves
+     * to it. A move cuts the connections in flight, and a working server is
+     * what counts; one that fails is left whatever this says.
+     */
+    const val TOLERANCE = 150
 
     const val AUTO_NAME = "Авто-выбор"
 
@@ -61,11 +68,9 @@ object ServerGroup {
         }
         if (covered) return null
         for (member in all) {
-            val proto = ProxyProtocol.of(member["type"]?.string) ?: continue
-            val host = member["server"]?.string ?: continue
-            val port = member["server_port"]?.int ?: continue
+            val e = XrayOutbound.endpointOf(member) ?: continue
             val outbound = obj("type" to TYPE, AUTO_KEY to true, "outbounds" to JArray(all))
-            return ParsedServer(AUTO_NAME, proto, host, port, outbound, null)
+            return ParsedServer(AUTO_NAME, e.proto, e.host, e.port, outbound, null)
         }
         return null
     }
@@ -93,8 +98,8 @@ object ServerGroup {
         val number = picked.removePrefix(prefix).toIntOrNull() ?: return null
         val member = members(outbound)?.getOrNull(number - 1) ?: return null
         member["tag"]?.string?.let { return it }
-        val host = member["server"]?.string ?: return null
-        return member["server_port"]?.int?.let { "$host:$it" } ?: host
+        XrayOutbound.endpointOf(member)?.let { return "${it.host}:${it.port}" }
+        return member["server"]?.string
     }
 
     /** The outbounds to put in the config, the first of them tagged `tag`. */
@@ -106,6 +111,7 @@ object ServerGroup {
             "tag" to tag,
             "outbounds" to Json.strings(tagged.mapNotNull { it["tag"]?.string }),
             "interval" to INTERVAL,
+            "tolerance" to TOLERANCE,
         )
         return listOf(group) + tagged
     }

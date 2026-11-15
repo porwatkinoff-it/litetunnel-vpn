@@ -9,7 +9,7 @@ public class SubscriptionTests
     [
         "vless://id-1@nl.example.com:443?security=reality&pbk=key&sni=www.microsoft.com&flow=xtls-rprx-vision#NL",
         "hysteria2://pw@de.example.com:443?sni=de.example.com#DE",
-        "vless://id-2@fi.example.com:443?security=reality&pbk=key&type=xhttp#FI xhttp",
+        "ssr://c3NyLmV4YW1wbGUuY29tOjQ0Mw#FI ssr",
         "happ://routing/add/eyJOYW1lIjoiUlUifQ==",
         "# comment",
     ];
@@ -36,7 +36,8 @@ public class SubscriptionTests
         var result = SubscriptionParser.Parse(body, headers);
         Assert.Equal(["NL", "DE"], result.Servers.Select(s => s.Name));
         Assert.Single(result.Skipped);
-        Assert.Contains("XHTTP", result.Skipped[0].Reason);
+        Assert.Contains("ssr", result.Skipped[0].Reason);
+        Assert.DoesNotContain("c3Ny", result.Skipped[0].Reason);
         Assert.Single(result.RoutingLines);
         Assert.Equal("Мой VPN", result.Meta.Title);
         Assert.Equal(12, result.Meta.UpdateIntervalHours);
@@ -99,16 +100,27 @@ public class SubscriptionTests
                   "fingerprint":"chrome"},"hysteriaSettings":{"version":2,"auth":"secret"}}}]},
               {"remarks":"US xhttp","outbounds":[
                 {"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"us.example.com","port":443,"users":[{"id":"id-3"}]}]},
-                 "streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"publicKey":"key"}}}]}
+                 "streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"publicKey":"key"}}}]},
+              {"remarks":"KR hy1","outbounds":[
+                {"tag":"proxy","protocol":"hysteria","settings":{"version":1,"address":"kr.example.com","port":443}}]}
             ]
             """;
         var result = Parse(json);
-        Assert.Equal(["🇳🇱 NL", "DE ws", "FI · proxy", "FI · proxy-2", "JP hy2"], result.Servers.Select(s => s.Name));
+        Assert.Equal(["🇳🇱 NL", "DE ws", "FI · proxy", "FI · proxy-2", "JP hy2", "US xhttp"], result.Servers.Select(s => s.Name));
         Assert.Equal(
-            [ProxyProtocol.Vless, ProxyProtocol.Vless, ProxyProtocol.Trojan, ProxyProtocol.Shadowsocks, ProxyProtocol.Hysteria2],
+            [ProxyProtocol.Vless, ProxyProtocol.Vless, ProxyProtocol.Trojan, ProxyProtocol.Shadowsocks, ProxyProtocol.Hysteria2, ProxyProtocol.Vless],
             result.Servers.Select(s => s.Proto));
-        Assert.Equal(["US xhttp"], result.Skipped.Select(s => s.Line));
-        Assert.Contains("XHTTP", result.Skipped[0].Reason);
+        Assert.Equal(["KR hy1"], result.Skipped.Select(s => s.Line));
+        Assert.Contains("Hysteria 1", result.Skipped[0].Reason);
+
+        // sing-box has no XHTTP: the outbound runs through Xray as the config wrote it.
+        var us = result.Servers[5];
+        Assert.Equal("xray", us.Outbound["type"]?.AsString);
+        Assert.Equal("xhttp", us.Outbound["outbound"]?["streamSettings"]?["network"]?.AsString);
+        Assert.Null(us.Outbound["outbound"]?["tag"]);
+        Assert.Equal("us.example.com", us.Host);
+        Assert.Equal(443, us.Port);
+        Assert.Equal("VLESS · Reality · XHTTP · Xray", new Server(null, us).Subtitle);
 
         var nl = result.Servers[0].Outbound;
         Assert.Equal("id-1", nl["uuid"]?.AsString);
@@ -170,18 +182,59 @@ public class SubscriptionTests
             """;
         var result = Parse(json);
         Assert.Equal(["Авто-выбор"], result.Servers.Select(s => s.Name));
-        Assert.Equal(["Авто-выбор · proxy-3"], result.Skipped.Select(s => s.Line));
+        Assert.Empty(result.Skipped);
 
         var server = new Server(null, result.Servers[0]);
-        Assert.Equal(["a.example.com", "b.example.com"], server.Members.Select(m => m.Host));
-        Assert.Equal("Самый быстрый из 2", server.Detail);
+        Assert.Equal(["a.example.com", "b.example.com", "c.example.com"], server.Members.Select(m => m.Host));
+        Assert.Equal("Самый быстрый из 3", server.Detail);
 
         var config = ConfigBuilder.Build(server, new AppSettings(), null);
         var outbounds = config["outbounds"]?.AsArray ?? [];
-        Assert.Equal(["proxy", "proxy-1", "proxy-2", "direct"], outbounds.Select(o => o["tag"]?.AsString).OfType<string>());
+        Assert.Equal(["proxy", "proxy-1", "proxy-2", "proxy-3", "direct"], outbounds.Select(o => o["tag"]?.AsString).OfType<string>());
         Assert.Equal("urltest", outbounds[0]["type"]?.AsString);
-        Assert.Equal(Json.Strings(["proxy-1", "proxy-2"]), outbounds[0]["outbounds"]);
+        Assert.Equal(Json.Strings(["proxy-1", "proxy-2", "proxy-3"]), outbounds[0]["outbounds"]);
         Assert.Equal("xtls-rprx-vision", outbounds[2]["flow"]?.AsString);
+        Assert.Equal("xray", outbounds[3]["type"]?.AsString);
+    }
+
+    [Fact]
+    public void XrayJsonFinalmaskStaysXray()
+    {
+        // sing-box has Hysteria 2, but not finalmask: the outbound stays Xray's.
+        const string json = """
+            {"remarks":"HY fm","outbounds":[{"tag":"proxy","protocol":"hysteria","settings":{"version":2,"address":"hy.example.com","port":443},
+              "streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"serverName":"hy.example.com","alpn":["h3"]},
+                "hysteriaSettings":{"version":2,"auth":"pw"},
+                "finalmask":{"udp":[{"type":"salamander","settings":{"password":"mask"}}]}}}]}
+            """;
+        var result = Parse(json);
+        Assert.Equal(["HY fm"], result.Servers.Select(s => s.Name));
+        var server = result.Servers[0];
+        Assert.Equal(ProxyProtocol.Hysteria2, server.Proto);
+        Assert.Equal("hy.example.com", server.Host);
+        Assert.Equal("xray", server.Outbound["type"]?.AsString);
+        Assert.Equal("salamander", server.Outbound["outbound"]?["streamSettings"]?["finalmask"]?["udp"]?[0]?["type"]?.AsString);
+        Assert.Equal("TLS · finalmask · Xray", new Server(null, server).Detail);
+    }
+
+    [Fact]
+    public void AutoRowTakesXrayServers()
+    {
+        var xray = ShareLink.Parse("vless://id@x.example.com:443?security=reality&pbk=k&type=xhttp#x");
+        var (state, _) = Subscribed([.. Named("a"), xray]);
+        Assert.Equal(["Авто-выбор", "a", "x"], state.Servers.Select(s => s.Name));
+        var members = state.Servers[0].Members;
+        Assert.Equal(["a", "x"], members.Select(m => m.Name));
+        Assert.Equal("x.example.com", members[1].Host);
+        Assert.Equal(ProxyProtocol.Vless, members[1].Proto);
+        Assert.Equal("Reality · XHTTP · Xray", members[1].Detail);
+
+        var config = ConfigBuilder.Build(state.Servers[0], new AppSettings(), null);
+        var outbounds = config["outbounds"]?.AsArray ?? [];
+        Assert.Equal(["proxy", "proxy-1", "proxy-2", "direct"], outbounds.Select(o => o["tag"]?.AsString).OfType<string>());
+        Assert.Equal("xray", outbounds[2]["type"]?.AsString);
+        // The inner Xray outbound carries no tag of its own; sing-box tags the wrapper.
+        Assert.Null(outbounds[2]["outbound"]?["tag"]);
     }
 
     [Fact]
@@ -316,6 +369,7 @@ public class SubscriptionTests
         Assert.Equal(["proxy", "proxy-1", "proxy-2", "direct"], outbounds.Select(o => o["tag"]?.AsString).OfType<string>());
         Assert.Equal("urltest", outbounds[0]["type"]?.AsString);
         Assert.Equal("5m", outbounds[0]["interval"]?.AsString);
+        Assert.Equal(150, outbounds[0]["tolerance"]?.AsInt);
         Assert.Null(outbounds[0]["auto"]);
     }
 

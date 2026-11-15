@@ -51,10 +51,129 @@ final class ShareLinkTests: XCTestCase {
         XCTAssertEqual(s.outbound["tls"]?["server_name"]?.stringValue, "g.example.com")
     }
 
-    func testXHTTPIsReportedUnsupported() {
-        XCTAssertThrowsError(try ShareLink.parse("vless://id@1.2.3.4:443?security=reality&pbk=k&type=xhttp")) { error in
-            XCTAssertEqual(error as? ShareLinkError, .unsupported("XHTTP (нет в ядре sing-box)"))
+    // MARK: - Through Xray
+
+    func testXHTTPRunsThroughXray() throws {
+        let s = try ShareLink.parse("vless://id@x.example.com:443?security=reality&pbk=k&sid=ab&type=xhttp&path=%2Fx#X")
+        XCTAssertEqual(s.proto, .vless)
+        XCTAssertEqual(s.host, "x.example.com")
+        XCTAssertEqual(s.port, 443)
+        XCTAssertEqual(s.outbound["type"], "xray")
+        let x = try XCTUnwrap(s.outbound["outbound"])
+        XCTAssertEqual(x["protocol"], "vless")
+        XCTAssertEqual(x["settings"]?["vnext"]?[0]?["address"], "x.example.com")
+        XCTAssertEqual(x["settings"]?["vnext"]?[0]?["users"]?[0]?["id"], "id")
+        XCTAssertEqual(x["settings"]?["vnext"]?[0]?["users"]?[0]?["encryption"], "none")
+        XCTAssertEqual(x["streamSettings"]?["network"], "xhttp")
+        XCTAssertEqual(x["streamSettings"]?["xhttpSettings"]?["path"], "/x")
+        XCTAssertEqual(x["streamSettings"]?["xhttpSettings"]?["mode"], "auto")
+        XCTAssertEqual(x["streamSettings"]?["realitySettings"]?["publicKey"], "k")
+        XCTAssertEqual(x["streamSettings"]?["realitySettings"]?["shortId"], "ab")
+        XCTAssertEqual(x["streamSettings"]?["realitySettings"]?["fingerprint"], "chrome")
+        XCTAssertEqual(x["streamSettings"]?["realitySettings"]?["serverName"], "x.example.com")
+        XCTAssertEqual(Server(subscriptionID: nil, parsed: s).subtitle, "VLESS · Reality · XHTTP · Xray")
+    }
+
+    func testXHTTPExtraAndMode() throws {
+        let extra = #"{"xPaddingBytes":"100-1000","noGRPCHeader":true,"path":"/ignored"}"#
+        let link = "vless://id@1.2.3.4:443?security=tls&sni=a.com&type=xhttp&mode=packet-up&host=cdn.com&path=%2Fp&extra="
+            + extra.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        let x = try XCTUnwrap(try ShareLink.parse(link).outbound["outbound"]?["streamSettings"])
+        XCTAssertEqual(x["xhttpSettings"]?["xPaddingBytes"], "100-1000")
+        XCTAssertEqual(x["xhttpSettings"]?["noGRPCHeader"], true)
+        // The link's own keys win over extra.
+        XCTAssertEqual(x["xhttpSettings"]?["path"], "/p")
+        XCTAssertEqual(x["xhttpSettings"]?["host"], "cdn.com")
+        XCTAssertEqual(x["xhttpSettings"]?["mode"], "packet-up")
+        XCTAssertEqual(x["tlsSettings"]?["serverName"], "a.com")
+    }
+
+    func testVLESSEncryptionRunsThroughXray() throws {
+        let s = try ShareLink.parse("vless://id@e.example.com:443?encryption=mlkem768x25519plus.native.0rtt.key&flow=xtls-rprx-vision&type=tcp#E")
+        let x = try XCTUnwrap(s.outbound["outbound"])
+        let user = x["settings"]?["vnext"]?[0]?["users"]?[0]
+        XCTAssertEqual(user?["encryption"], "mlkem768x25519plus.native.0rtt.key")
+        XCTAssertEqual(user?["flow"], "xtls-rprx-vision")
+        XCTAssertEqual(x["streamSettings"]?["network"], "raw")
+        XCTAssertNil(x["streamSettings"]?["security"])
+        XCTAssertEqual(Server(subscriptionID: nil, parsed: s).detail, "Vision · Encryption · Xray")
+    }
+
+    func testMKCPLink() throws {
+        let s = try ShareLink.parse("vless://id@k.example.com:8443?security=tls&type=kcp&headerType=wechat-video&seed=s33d#K")
+        let k = s.outbound["outbound"]?["streamSettings"]
+        XCTAssertEqual(k?["network"], "kcp")
+        XCTAssertEqual(k?["kcpSettings"]?["header"]?["type"], "wechat-video")
+        XCTAssertEqual(k?["kcpSettings"]?["seed"], "s33d")
+        XCTAssertEqual(Server(subscriptionID: nil, parsed: s).detail, "TLS · mKCP · Xray")
+    }
+
+    func testPlainVLESSAndTrojanToTheInternetAreSkipped() throws {
+        // Xray refuses them: the id or the password would go out in the clear.
+        XCTAssertThrowsError(try ShareLink.parse("vless://id@k.example.com:8443?type=kcp&seed=s#K")) {
+            XCTAssertEqual($0 as? ShareLinkError, .unsupported("VLESS без TLS и шифрования"))
         }
+        XCTAssertThrowsError(try ShareLink.parse("trojan://p@8.8.8.8:80?security=none&type=xhttp")) {
+            XCTAssertEqual($0 as? ShareLinkError, .unsupported("Trojan без TLS"))
+        }
+        // Inside the local network Xray allows them.
+        for host in ["192.168.1.2", "10.0.0.5", "router.lan", "[fd00::1]"] {
+            let s = try ShareLink.parse("vless://id@\(host):8443?type=kcp#L")
+            XCTAssertEqual(s.outbound["type"], "xray", host)
+        }
+        // Xray runs Reality over RAW, XHTTP and gRPC only.
+        XCTAssertThrowsError(try ShareLink.parse("vless://id@k.example.com:443?security=reality&pbk=k&type=kcp#R")) {
+            XCTAssertEqual($0 as? ShareLinkError, .unsupported("Reality с транспортом kcp"))
+        }
+        // sing-box's own plain VLESS is not Xray's to refuse.
+        XCTAssertEqual(try ShareLink.parse("vless://id@k.example.com:443?type=ws").outbound["type"], "vless")
+    }
+
+    func testVMessHTTPHeaderAndKCP() throws {
+        let http = #"{"v":"2","ps":"vh","add":"v.example.com","port":"80","id":"uuid-1","aid":"0","scy":"aes-128-gcm","net":"tcp","type":"http","host":"a.com,b.com","path":"/x"}"#
+        let s = try ShareLink.parse("vmess://" + Data(http.utf8).base64EncodedString())
+        XCTAssertEqual(s.name, "vh")
+        XCTAssertEqual(s.proto, .vmess)
+        let x = try XCTUnwrap(s.outbound["outbound"])
+        XCTAssertEqual(x["protocol"], "vmess")
+        XCTAssertEqual(x["settings"]?["vnext"]?[0]?["users"]?[0]?["security"], "aes-128-gcm")
+        XCTAssertNil(x["settings"]?["vnext"]?[0]?["users"]?[0]?["alterId"])
+        let request = x["streamSettings"]?["rawSettings"]?["header"]?["request"]
+        XCTAssertEqual(request?["path"], .strings(["/x"]))
+        XCTAssertEqual(request?["headers"]?["Host"], .strings(["a.com", "b.com"]))
+        XCTAssertEqual(Server(subscriptionID: nil, parsed: s).detail, "HTTP · Xray")
+
+        // Old vmess links carry the mKCP seed in path.
+        let kcp = #"{"v":"2","ps":"vk","add":"1.2.3.4","port":443,"id":"uuid-1","net":"kcp","type":"none","path":"seed1"}"#
+        let k = try ShareLink.parse("vmess://" + Data(kcp.utf8).base64EncodedString()).outbound["outbound"]?["streamSettings"]
+        XCTAssertEqual(k?["kcpSettings"]?["seed"], "seed1")
+        XCTAssertNil(k?["kcpSettings"]?["header"])
+    }
+
+    func testTrojanXHTTP() throws {
+        let s = try ShareLink.parse("trojan://secret@t.example.com:443?type=xhttp&path=%2Ft#T")
+        let x = try XCTUnwrap(s.outbound["outbound"])
+        XCTAssertEqual(x["protocol"], "trojan")
+        XCTAssertEqual(x["settings"]?["servers"]?[0]?["address"], "t.example.com")
+        XCTAssertEqual(x["settings"]?["servers"]?[0]?["password"], "secret")
+        XCTAssertEqual(x["streamSettings"]?["security"], "tls")
+        XCTAssertEqual(x["streamSettings"]?["tlsSettings"]?["serverName"], "t.example.com")
+    }
+
+    func testXrayTLSNeverAllowsInsecure() throws {
+        let s = try ShareLink.parse("vless://id@1.2.3.4:443?security=tls&insecure=1&allowInsecure=1&pcs=abcd&vcn=real.com&type=xhttp")
+        let t = s.outbound["outbound"]?["streamSettings"]?["tlsSettings"]
+        XCTAssertNil(t?["allowInsecure"])
+        XCTAssertEqual(t?["pinnedPeerCertSha256"], "abcd")
+        XCTAssertEqual(t?["verifyPeerCertByName"], "real.com")
+        // No sni and an IP address: no server name at all.
+        XCTAssertNil(t?["serverName"])
+    }
+
+    func testTransportsSingBoxHasStayNative() throws {
+        // ws and grpc keep sing-box's own outbound, which costs less.
+        XCTAssertEqual(try ShareLink.parse("vless://id@1.2.3.4:443?security=tls&type=ws").outbound["type"], "vless")
+        XCTAssertEqual(try ShareLink.parse("trojan://p@1.2.3.4:443?type=grpc").outbound["type"], "trojan")
     }
 
     func testHysteria2PortHoppingAndObfs() throws {

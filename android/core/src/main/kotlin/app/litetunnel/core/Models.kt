@@ -68,6 +68,7 @@ data class Server(
     val detail: String
         get() {
             ServerGroup.members(outbound)?.let { return "Самый быстрый из ${it.size}" }
+            XrayOutbound.inner(outbound)?.let { return XrayOutbound.detail(it) }
             val parts = ArrayList<String>()
             val tls = outbound["tls"]
             if (tls != null && tls["enabled"]?.bool == true) {
@@ -90,10 +91,8 @@ data class Server(
      */
     val members: List<Server> by lazy {
         (ServerGroup.members(outbound) ?: emptyList()).mapNotNull { member ->
-            val proto = ProxyProtocol.of(member["type"]?.string) ?: return@mapNotNull null
-            val host = member["server"]?.string ?: return@mapNotNull null
-            val port = member["server_port"]?.int ?: return@mapNotNull null
-            Server(subscriptionId, ParsedServer(member["tag"]?.string ?: "$host:$port", proto, host, port, member, null))
+            val e = XrayOutbound.endpointOf(member) ?: return@mapNotNull null
+            Server(subscriptionId, ParsedServer(member["tag"]?.string ?: "${e.host}:${e.port}", e.proto, e.host, e.port, member, null))
         }
     }
 }

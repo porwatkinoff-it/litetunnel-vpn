@@ -39,7 +39,7 @@ internal class AndroidPlatform(private val service: VpnService) : CorePlatform(s
 
     override fun openTun(options: TunOptions): Int {
         if (VpnService.prepare(service) != null) throw Exception("Нет разрешения на VPN")
-        val builder = service.Builder().setSession("LiteTunnel").setMtu(options.getMTU())
+        val builder = service.Builder().setSession("Link").setMtu(options.getMTU())
         if (Build.VERSION.SDK_INT >= 29) {
             // Metered then follows the real network, not "always metered".
             builder.setMetered(false)

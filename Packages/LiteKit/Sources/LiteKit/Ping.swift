@@ -4,9 +4,10 @@ import Network
 
 /// Measures how long it takes to reach a server, outside the tunnel.
 ///
-/// TCP servers get a TCP handshake. Hysteria2 and TUIC run over QUIC, so they
-/// get a QUIC handshake instead; with salamander obfs the server does not
-/// answer plain QUIC, and the result is nil (not measurable). ICMP sends one
+/// TCP servers get a TCP handshake. Hysteria2, TUIC and XHTTP over HTTP/3 run
+/// over QUIC, so they get a QUIC handshake instead; with salamander obfs or
+/// finalmask the server does not answer plain QUIC, and mKCP has no handshake
+/// to time, so the result is nil (not measurable). ICMP sends one
 /// echo request. Through the server needs the core: the app runs one for
 /// the measurement, times `request(through:)` against it and then runs
 /// `check(through:)`.
@@ -26,18 +27,16 @@ public enum Ping {
             let interface = await outsideInterface()
             return await icmp(server.host, interface: interface, timeout: timeout)
         }
+        guard let handshake = handshake(server) else { return nil }
         let parameters: NWParameters
-        switch server.proto {
-        case .hysteria2, .tuic:
-            if server.outbound["obfs"] != nil { return nil }
-            let alpn = server.outbound["tls"]?["alpn"]?.arrayValue?.compactMap(\.stringValue) ?? []
-            let quic = NWProtocolQUIC.Options(alpn: alpn.isEmpty ? ["h3"] : alpn)
-            let sni = server.outbound["tls"]?["server_name"]?.stringValue ?? server.host
+        switch handshake {
+        case let .quic(sni, alpn):
+            let quic = NWProtocolQUIC.Options(alpn: alpn)
             sec_protocol_options_set_tls_server_name(quic.securityProtocolOptions, sni)
             // Reachability only: the certificate is checked by the core on connect.
             sec_protocol_options_set_verify_block(quic.securityProtocolOptions, { _, _, complete in complete(true) }, .global())
             parameters = NWParameters(quic: quic)
-        default:
+        case .tcp:
             let tcp = NWProtocolTCP.Options()
             tcp.connectionTimeout = Int(timeout.rounded(.up))
             tcp.noDelay = true
@@ -69,6 +68,26 @@ public enum Ping {
                 once.finish(.failed)
                 connection.cancel()
             }
+        }
+    }
+
+    /// What a ping times for a server, outside the tunnel.
+    public enum Handshake: Equatable, Sendable {
+        case tcp
+        case quic(sni: String, alpn: [String])
+    }
+
+    /// The handshake to time for `server`, nil when it cannot be measured.
+    public static func handshake(_ server: Server) -> Handshake? {
+        if let xray = XrayOutbound.inner(of: server.outbound) { return XrayOutbound.handshake(xray, host: server.host) }
+        switch server.proto {
+        case .hysteria2, .tuic:
+            if server.outbound["obfs"] != nil { return nil }
+            let tls = server.outbound["tls"]
+            let alpn = tls?["alpn"]?.arrayValue?.compactMap(\.stringValue) ?? []
+            return .quic(sni: tls?["server_name"]?.stringValue ?? server.host, alpn: alpn.isEmpty ? ["h3"] : alpn)
+        default:
+            return .tcp
         }
     }
 

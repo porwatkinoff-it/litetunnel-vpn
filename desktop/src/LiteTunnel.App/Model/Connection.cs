@@ -24,7 +24,7 @@ public sealed class Connection
     private int proxyPort;
     private bool isGroup;
     private int groupGeneration;
-    private DateTimeOffset lastGroupTest;
+    private GroupWatch watch = new();
 
     public Connection(Store store, string singBox)
     {
@@ -138,35 +138,71 @@ public sealed class Connection
     /// <summary>
     /// The core's first test of a group can run before the network is up: then
     /// every member fails and the first one stays picked until the next test.
-    /// So test again a moment after each start and reload.
+    /// So test again a moment after each start and reload, and from then on
+    /// keep the group on a server that answers, see <see cref="GroupWatch"/>.
     /// </summary>
     private void GroupChanged(AppState state)
     {
         isGroup = state.SelectedServer?.IsGroup == true;
         int generation = ++groupGeneration;
+        watch = new GroupWatch();
         if (!isGroup) return;
         foreach (int seconds in new[] { 3, 20 }) _ = TestGroupAfterAsync(TimeSpan.FromSeconds(seconds), generation);
+        _ = WatchGroupAsync(generation);
     }
 
     private async Task TestGroupAfterAsync(TimeSpan delay, int generation)
     {
         await Task.Delay(delay);
-        if (generation == groupGeneration) TestGroup();
+        if (generation == groupGeneration) await TestGroupAsync();
     }
 
-    /// <summary>The window came back: test the group again, once a minute at most.</summary>
+    private static double Now => Environment.TickCount64 / 1000.0;
+
+    /// <summary>The window came back: test the group unless it was checked in the last minute.</summary>
     public void RefreshGroup()
     {
-        if (DateTimeOffset.UtcNow - lastGroupTest > TimeSpan.FromMinutes(1)) TestGroup();
+        if (isGroup && watch.ProbeDue(Now, GroupWatch.WakeGap)) _ = TestGroupAsync();
     }
 
-    private async void TestGroup()
+    private async Task TestGroupAsync()
     {
         if (!isGroup || Status != ConnectionStatus.Connected || Api is not { } api) return;
-        lastGroupTest = DateTimeOffset.UtcNow;
+        watch.Tested(Now);
         using var http = StatusApi.Client();
         await api.TestGroupAsync(http, ConfigBuilder.ProxyTag);
         GroupTested?.Invoke();
+    }
+
+    /// <summary>
+    /// One request through the picked server every two minutes; a full test
+    /// as soon as it does not answer, and again, further apart, while the
+    /// pick that test leaves does not answer either. Ends with the run.
+    /// </summary>
+    private async Task WatchGroupAsync(int generation)
+    {
+        using var http = StatusApi.Client();
+        while (true)
+        {
+            var wait = watch.Answered ? GroupWatch.ProbeInterval : watch.RetryDelay;
+            await Task.Delay(TimeSpan.FromSeconds(wait));
+            if (generation != groupGeneration) return;
+            if (Status != ConnectionStatus.Connected) continue;
+            bool full = watch.Answered
+                ? watch.ProbeDue(Now, GroupWatch.ProbeInterval - 15) && await CheckPickAsync(http) == true
+                : watch.RetryDue(Now);
+            if (!full || generation != groupGeneration) continue;
+            await TestGroupAsync();
+            if (generation == groupGeneration) await CheckPickAsync(http);
+        }
+    }
+
+    /// <summary>Checks the picked server. True when the group should be tested in full; null when the core did not say.</summary>
+    private async Task<bool?> CheckPickAsync(HttpClient http)
+    {
+        if (Api is not { } api || await api.SelectedAsync(http, ConfigBuilder.ProxyTag) is not { } picked) return null;
+        if (await api.ProbeAsync(http, picked) is not { } answered) return null;
+        return watch.Reported(answered, Now);
     }
 
     /// <summary>The core tested the group anew: its pick may have changed.</summary>

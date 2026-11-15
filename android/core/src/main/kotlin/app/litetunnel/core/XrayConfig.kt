@@ -3,7 +3,8 @@ package app.litetunnel.core
 /**
  * Xray JSON, as panels serve it to Happ and v2RayTun: an array of full Xray
  * configs, one per server, or a single config. Each proxy outbound becomes a
- * sing-box one through the same TLS and transport code as share links. A
+ * sing-box one through the same TLS and transport code as share links, or
+ * stays an Xray one where sing-box lacks what it needs (`XrayOutbound`). A
  * config with a balancer is one entry: a ServerGroup of the balanced outbounds.
  */
 internal object XrayConfig {
@@ -71,7 +72,20 @@ internal object XrayConfig {
 
     private val empty: Json = JObject(emptyMap())
 
+    /**
+     * sing-box's own outbound where it has everything the server needs, as
+     * it costs less; the Xray outbound as it is where it does not.
+     */
     fun server(outbound: Json, name: String?): ParsedServer {
+        if (XrayOutbound.needsXray(outbound)) return XrayOutbound.server(outbound, name)
+        return try {
+            singBox(outbound, name)
+        } catch (e: ShareLinkError.Unsupported) {
+            XrayOutbound.server(outbound, name)
+        }
+    }
+
+    private fun singBox(outbound: Json, name: String?): ParsedServer {
         val proto = (outbound["protocol"]?.string ?: "").lowercase()
         val settings = outbound["settings"] ?: empty
         // Nested in vnext/servers, or flat in settings as newer Xray allows.
@@ -129,10 +143,6 @@ internal object XrayConfig {
             }
             "hysteria" -> {
                 if ((settings["version"]?.int ?: 2) != 2) throw ShareLinkError.Unsupported("Hysteria 1")
-                // Salamander and the like live in finalmask, whose shape is not documented yet.
-                if (stream["finalmask"] != null || stream["finalMask"] != null) {
-                    throw ShareLinkError.Unsupported("Hysteria с finalmask")
-                }
                 out = out.with("type", JString("hysteria2"))
                     .with("password", JString(stream["hysteriaSettings"]?.get("auth")?.string ?: ""))
                 // QUIC: no uTLS fingerprint and no Reality.

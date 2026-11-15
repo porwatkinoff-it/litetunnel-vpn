@@ -2,7 +2,8 @@ import Foundation
 
 /// Xray JSON, as panels serve it to Happ and v2RayTun: an array of full Xray
 /// configs, one per server, or a single config. Each proxy outbound becomes a
-/// sing-box one through the same TLS and transport code as share links. A
+/// sing-box one through the same TLS and transport code as share links, or
+/// stays an Xray one where sing-box lacks what it needs (`XrayOutbound`). A
 /// config with a balancer is one entry: a ServerGroup of the balanced outbounds.
 enum XrayConfig {
     /// Routing targets inside the config, not servers.
@@ -64,7 +65,18 @@ enum XrayConfig {
         }
     }
 
+    /// sing-box's own outbound where it has everything the server needs, as
+    /// it costs less; the Xray outbound as it is where it does not.
     static func server(_ outbound: JSONValue, name: String?) throws -> ParsedServer {
+        if XrayOutbound.needsXray(outbound) { return try XrayOutbound.server(outbound, name: name) }
+        do {
+            return try singBox(outbound, name: name)
+        } catch ShareLinkError.unsupported(_) {
+            return try XrayOutbound.server(outbound, name: name)
+        }
+    }
+
+    static func singBox(_ outbound: JSONValue, name: String?) throws -> ParsedServer {
         let proto = (outbound["protocol"]?.stringValue ?? "").lowercased()
         let settings = outbound["settings"] ?? [:]
         // Nested in vnext/servers, or flat in settings as newer Xray allows.
@@ -117,8 +129,6 @@ enum XrayConfig {
             return ParsedServer(name: name ?? "\(host):\(port)", proto: .socks, host: host, port: port, outbound: out, shareLink: nil)
         case "hysteria":
             guard (settings["version"]?.intValue ?? 2) == 2 else { throw ShareLinkError.unsupported("Hysteria 1") }
-            // Salamander and the like live in finalmask, whose shape is not documented yet.
-            if stream["finalmask"] != nil || stream["finalMask"] != nil { throw ShareLinkError.unsupported("Hysteria с finalmask") }
             out["type"] = "hysteria2"
             out["password"] = .string(stream["hysteriaSettings"]?["auth"]?.stringValue ?? "")
             // QUIC: no uTLS fingerprint and no Reality.

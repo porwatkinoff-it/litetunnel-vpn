@@ -49,21 +49,36 @@ object ShareLink {
         val uri = LinkUri(line)
         val uuid = uri.user?.takeIf { it.isNotEmpty() } ?: throw ShareLinkError.Invalid("нет UUID")
         val port = uri.singlePort()
-        val encryption = uri.query["encryption"]
-        if (!encryption.isNullOrEmpty() && encryption != "none") throw ShareLinkError.Unsupported("VLESS Encryption")
-        var outbound = obj(
-            "type" to "vless",
-            "server" to uri.host,
-            "server_port" to port,
-            "uuid" to uuid,
-            "packet_encoding" to "xudp",
-        )
-        if (uri.query["flow"]?.startsWith("xtls-rprx-vision") == true) {
-            outbound = outbound.with("flow", JString("xtls-rprx-vision"))
+        val q = uri.query
+        val encryption = nonEmpty(q["encryption"]) ?: "none"
+        val security = q["security"] ?: "none"
+        try {
+            if (encryption != "none") throw ShareLinkError.Unsupported("VLESS Encryption")
+            var outbound = obj(
+                "type" to "vless",
+                "server" to uri.host,
+                "server_port" to port,
+                "uuid" to uuid,
+                "packet_encoding" to "xudp",
+            )
+            if (q["flow"]?.startsWith("xtls-rprx-vision") == true) {
+                outbound = outbound.with("flow", JString("xtls-rprx-vision"))
+            }
+            outbound = outbound.with("tls", tls(security, q, uri.host))
+            outbound = outbound.with("transport", transport(q["type"] ?: "tcp", q))
+            return ParsedServer(uri.name, ProxyProtocol.VLESS, uri.host, port, outbound, line)
+        } catch (e: ShareLinkError.Unsupported) {
+            val user = obj("id" to uuid, "encryption" to encryption, "flow" to nonEmpty(q["flow"]))
+            return viaXray("vless", uri, port, user, security, line, ProxyProtocol.VLESS)
         }
-        outbound = outbound.with("tls", tls(uri.query["security"] ?: "none", uri.query, uri.host))
-        outbound = outbound.with("transport", transport(uri.query["type"] ?: "tcp", uri.query))
-        return ParsedServer(uri.name, ProxyProtocol.VLESS, uri.host, port, outbound, line)
+    }
+
+    /** The same link through Xray: for the transports and features sing-box lacks. */
+    private fun viaXray(
+        name: String, uri: LinkUri, port: Int, user: Json, security: String, line: String, proto: ProxyProtocol,
+    ): ParsedServer {
+        val xray = XrayOutbound.fromLink(name, uri.host, port, user, uri.query["type"] ?: "tcp", security, uri.query)
+        return ParsedServer(uri.name, proto, uri.host, port, XrayOutbound.wrap(xray), line)
     }
 
     // Trojan
@@ -78,8 +93,13 @@ object ShareLink {
             "server_port" to port,
             "password" to password,
         )
-        outbound = outbound.with("tls", tls(uri.query["security"] ?: "tls", uri.query, uri.host))
-        outbound = outbound.with("transport", transport(uri.query["type"] ?: "tcp", uri.query))
+        val security = uri.query["security"] ?: "tls"
+        try {
+            outbound = outbound.with("tls", tls(security, uri.query, uri.host))
+            outbound = outbound.with("transport", transport(uri.query["type"] ?: "tcp", uri.query))
+        } catch (e: ShareLinkError.Unsupported) {
+            return viaXray("trojan", uri, port, obj("password" to password), security, line, ProxyProtocol.TROJAN)
+        }
         return ParsedServer(uri.name, ProxyProtocol.TROJAN, uri.host, port, outbound, line)
     }
 
@@ -287,9 +307,29 @@ object ShareLink {
         field("alpn")?.let { query["alpn"] = it }
         field("fp")?.let { query["fp"] = it }
         (field("allowInsecure") ?: field("insecure"))?.let { query["allowinsecure"] = it }
-        outbound = outbound.with("tls", tls(field("tls") ?: "none", query, host))
-        outbound = outbound.with("transport", transport(field("net") ?: "tcp", query))
-        return ParsedServer(field("ps") ?: "$host:$port", ProxyProtocol.VMESS, host, port, outbound, line)
+        val name = field("ps") ?: "$host:$port"
+        val security = field("tls") ?: "none"
+        val network = field("net") ?: "tcp"
+        try {
+            outbound = outbound.with("tls", tls(security, query, host))
+            outbound = outbound.with("transport", transport(network, query))
+        } catch (e: ShareLinkError.Unsupported) {
+            // v2rayN's layout: mKCP keeps its seed in path, XHTTP its mode in type.
+            when (network.lowercase()) {
+                "kcp", "mkcp" -> (field("seed") ?: field("path"))?.let { query["seed"] = it }
+                "xhttp", "splithttp" -> {
+                    (field("mode") ?: field("type")?.takeIf { it != "none" })?.let { query["mode"] = it }
+                    field("extra")?.let { query["extra"] = it }
+                }
+            }
+            field("pcs")?.let { query["pcs"] = it }
+            field("vcn")?.let { query["vcn"] = it }
+            var user = obj("id" to uuid, "security" to (field("scy") ?: "auto"))
+            field("aid")?.toIntOrNull()?.takeIf { it > 0 }?.let { user = user.with("alterId", JInt(it.toLong())) }
+            val xray = XrayOutbound.fromLink("vmess", host, port, user, network, security, query)
+            return ParsedServer(name, ProxyProtocol.VMESS, host, port, XrayOutbound.wrap(xray), line)
+        }
+        return ParsedServer(name, ProxyProtocol.VMESS, host, port, outbound, line)
     }
 
     // Shared pieces

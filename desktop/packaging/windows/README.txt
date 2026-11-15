@@ -1,4 +1,4 @@
-LiteTunnel @VERSION@ для Windows (x64)
+Link @VERSION@ для Windows (x64)
 
 Запуск
   Распакуйте архив в любую папку, например C:\Users\<имя>\LiteTunnel, и запустите LiteTunnel.exe.

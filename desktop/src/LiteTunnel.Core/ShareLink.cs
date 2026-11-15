@@ -71,19 +71,36 @@ public static class ShareLink
         var uuid = uri.User;
         if (string.IsNullOrEmpty(uuid)) throw ShareLinkException.Invalid("нет UUID");
         int port = uri.SinglePort();
-        if (uri.Query.GetValueOrDefault("encryption") is { Length: > 0 } encryption && encryption != "none")
-            throw ShareLinkException.Unsupported("VLESS Encryption");
-        var outbound = Json.Object(
-            ("type", "vless"),
-            ("server", uri.Host),
-            ("server_port", port),
-            ("uuid", uuid),
-            ("packet_encoding", "xudp"));
-        if (uri.Query.GetValueOrDefault("flow") is { } flow && flow.StartsWith("xtls-rprx-vision", StringComparison.Ordinal))
-            outbound = outbound.With("flow", "xtls-rprx-vision");
-        outbound = outbound.With("tls", Tls(uri.Query.GetValueOrDefault("security") ?? "none", uri.Query, uri.Host));
-        outbound = outbound.With("transport", Transport(uri.Query.GetValueOrDefault("type") ?? "tcp", uri.Query));
-        return new ParsedServer(uri.Name, ProxyProtocol.Vless, uri.Host, port, outbound, line);
+        var q = uri.Query;
+        var encryption = TextUtil.NonEmpty(q.GetValueOrDefault("encryption")) ?? "none";
+        var security = q.GetValueOrDefault("security") ?? "none";
+        try
+        {
+            if (encryption != "none") throw ShareLinkException.Unsupported("VLESS Encryption");
+            var outbound = Json.Object(
+                ("type", "vless"),
+                ("server", uri.Host),
+                ("server_port", port),
+                ("uuid", uuid),
+                ("packet_encoding", "xudp"));
+            if (q.GetValueOrDefault("flow") is { } flow && flow.StartsWith("xtls-rprx-vision", StringComparison.Ordinal))
+                outbound = outbound.With("flow", "xtls-rprx-vision");
+            outbound = outbound.With("tls", Tls(security, q, uri.Host));
+            outbound = outbound.With("transport", Transport(q.GetValueOrDefault("type") ?? "tcp", q));
+            return new ParsedServer(uri.Name, ProxyProtocol.Vless, uri.Host, port, outbound, line);
+        }
+        catch (ShareLinkException e) when (e.Kind == ShareLinkErrorKind.Unsupported)
+        {
+            var user = Json.Object(("id", uuid), ("encryption", encryption), ("flow", TextUtil.NonEmpty(q.GetValueOrDefault("flow"))));
+            return ViaXray("vless", uri, port, user, security, line, ProxyProtocol.Vless);
+        }
+    }
+
+    /// <summary>The same link through Xray: for the transports and features sing-box lacks.</summary>
+    private static ParsedServer ViaXray(string name, LinkUri uri, int port, Json user, string security, string line, ProxyProtocol proto)
+    {
+        var xray = XrayOutbound.FromLink(name, uri.Host, port, user, uri.Query.GetValueOrDefault("type") ?? "tcp", security, uri.Query);
+        return new ParsedServer(uri.Name, proto, uri.Host, port, XrayOutbound.Wrap(xray), line);
     }
 
     // Trojan
@@ -99,8 +116,16 @@ public static class ShareLink
             ("server", uri.Host),
             ("server_port", port),
             ("password", password));
-        outbound = outbound.With("tls", Tls(uri.Query.GetValueOrDefault("security") ?? "tls", uri.Query, uri.Host));
-        outbound = outbound.With("transport", Transport(uri.Query.GetValueOrDefault("type") ?? "tcp", uri.Query));
+        var security = uri.Query.GetValueOrDefault("security") ?? "tls";
+        try
+        {
+            outbound = outbound.With("tls", Tls(security, uri.Query, uri.Host));
+            outbound = outbound.With("transport", Transport(uri.Query.GetValueOrDefault("type") ?? "tcp", uri.Query));
+        }
+        catch (ShareLinkException e) when (e.Kind == ShareLinkErrorKind.Unsupported)
+        {
+            return ViaXray("trojan", uri, port, Json.Object(("password", password)), security, line, ProxyProtocol.Trojan);
+        }
         return new ParsedServer(uri.Name, ProxyProtocol.Trojan, uri.Host, port, outbound, line);
     }
 
@@ -321,9 +346,35 @@ public static class ShareLink
         Put("alpn", Field("alpn"));
         Put("fp", Field("fp"));
         Put("allowinsecure", Field("allowInsecure") ?? Field("insecure"));
-        outbound = outbound.With("tls", Tls(Field("tls") ?? "none", query, host));
-        outbound = outbound.With("transport", Transport(Field("net") ?? "tcp", query));
-        return new ParsedServer(Field("ps") ?? $"{host}:{port}", ProxyProtocol.Vmess, host, port, outbound, line);
+        var name = Field("ps") ?? $"{host}:{port}";
+        var security = Field("tls") ?? "none";
+        var network = Field("net") ?? "tcp";
+        try
+        {
+            outbound = outbound.With("tls", Tls(security, query, host));
+            outbound = outbound.With("transport", Transport(network, query));
+        }
+        catch (ShareLinkException e) when (e.Kind == ShareLinkErrorKind.Unsupported)
+        {
+            // v2rayN's layout: mKCP keeps its seed in path, XHTTP its mode in type.
+            switch (network.ToLowerInvariant())
+            {
+                case "kcp" or "mkcp":
+                    Put("seed", Field("seed") ?? Field("path"));
+                    break;
+                case "xhttp" or "splithttp":
+                    Put("mode", Field("mode") ?? (Field("type") is { } mode && mode != "none" ? mode : null));
+                    Put("extra", Field("extra"));
+                    break;
+            }
+            Put("pcs", Field("pcs"));
+            Put("vcn", Field("vcn"));
+            var user = Json.Object(("id", uuid), ("security", Field("scy") ?? "auto"));
+            if (TextUtil.ParseInt(Field("aid")) is { } aid && aid > 0) user = user.With("alterId", aid);
+            var xray = XrayOutbound.FromLink("vmess", host, port, user, network, security, query);
+            return new ParsedServer(name, ProxyProtocol.Vmess, host, port, XrayOutbound.Wrap(xray), line);
+        }
+        return new ParsedServer(name, ProxyProtocol.Vmess, host, port, outbound, line);
     }
 
     // Shared pieces

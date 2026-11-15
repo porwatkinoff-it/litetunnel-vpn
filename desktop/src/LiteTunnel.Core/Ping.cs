@@ -42,9 +42,10 @@ public interface IProbeNetwork
 }
 
 /// <summary>
-/// TCP servers get a TCP handshake. Hysteria2 and TUIC run over QUIC, so they
-/// get a QUIC Initial instead and any answer counts; with salamander obfs the
-/// server does not answer plain QUIC, and the result is null (not measurable).
+/// TCP servers get a TCP handshake. Hysteria2, TUIC and XHTTP over HTTP/3 run
+/// over QUIC, so they get a QUIC Initial instead and any answer counts; with
+/// salamander obfs or finalmask the server does not answer plain QUIC, and
+/// mKCP has no handshake to time, so the result is null (not measurable).
 /// The name is resolved first and only the handshake is timed, so the number
 /// is the round trip to the server, not to the DNS resolver.
 /// </summary>
@@ -54,8 +55,7 @@ public class SocketPinger(IProbeNetwork network) : IPinger
 
     public async Task<PingResult?> MeasureAsync(Server server, int timeoutMs, CancellationToken cancellation = default)
     {
-        bool quic = server.Proto is ProxyProtocol.Hysteria2 or ProxyProtocol.Tuic;
-        if (quic && server.Outbound["obfs"] is not null) return null;
+        if (Ping.HandshakeOf(server) is not { } handshake) return null;
         if (!ShareLink.ValidPort(server.Port)) return PingResult.Failed;
         IPAddress address;
         try
@@ -67,14 +67,8 @@ public class SocketPinger(IProbeNetwork network) : IPinger
             return PingResult.Failed;
         }
         var endpoint = new IPEndPoint(address, server.Port);
-        if (quic)
-        {
-            var tls = server.Outbound["tls"];
-            var alpn = tls?["alpn"]?.AsArray?.Select(a => a.AsString).OfType<string>().ToList() ?? [];
-            if (alpn.Count == 0) alpn = ["h3"];
-            var sni = tls?["server_name"]?.AsString ?? server.Host;
-            return await QuicProbe.ProbeAsync(endpoint, sni, alpn, timeoutMs, network.Bind, cancellation).ConfigureAwait(false);
-        }
+        if (handshake is Handshake.Quic quic)
+            return await QuicProbe.ProbeAsync(endpoint, quic.Sni, [.. quic.Alpn], timeoutMs, network.Bind, cancellation).ConfigureAwait(false);
         return await TcpAsync(endpoint, timeoutMs, cancellation).ConfigureAwait(false);
     }
 
@@ -115,8 +109,34 @@ public sealed class IcmpPinger(IProbeNetwork network) : IPinger
     }
 }
 
+/// <summary>What a ping times for a server, outside the tunnel.</summary>
+public abstract record Handshake
+{
+    public sealed record Tcp : Handshake
+    {
+        public static readonly Tcp Instance = new();
+    }
+
+    public sealed record Quic(string Sni, IReadOnlyList<string> Alpn) : Handshake
+    {
+        public bool Equals(Quic? other) => other is not null && Sni == other.Sni && Alpn.SequenceEqual(other.Alpn);
+        public override int GetHashCode() => Sni.GetHashCode();
+    }
+}
+
 public static class Ping
 {
+    /// <summary>The handshake to time for <paramref name="server"/>, null when it cannot be measured.</summary>
+    public static Handshake? HandshakeOf(Server server)
+    {
+        if (XrayOutbound.Inner(server.Outbound) is { } xray) return XrayOutbound.HandshakeOf(xray, server.Host);
+        if (server.Proto is not (ProxyProtocol.Hysteria2 or ProxyProtocol.Tuic)) return Handshake.Tcp.Instance;
+        if (server.Outbound["obfs"] is not null) return null;
+        var tls = server.Outbound["tls"];
+        var alpn = tls?["alpn"]?.AsArray?.Select(a => a.AsString).OfType<string>().ToList() ?? [];
+        return new Handshake.Quic(tls?["server_name"]?.AsString ?? server.Host, alpn.Count == 0 ? ["h3"] : alpn);
+    }
+
     public const int TimeoutMs = 3_000;
 
     /// <summary>Requests through the server get longer: the whole request has to go through.</summary>

@@ -89,16 +89,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         self.server = server
         try server.start()
         try server.startOrReloadService(config, options: LibboxOverrideOptions())
-        statusReader = StatusReader()
-        statusReader?.groupChanged(isGroup: state.selectedServer?.isGroup == true)
+        let statusReader = StatusReader()
+        self.statusReader = statusReader
+        #if os(iOS)
+        if !ScreenObserver.isScreenOn { statusReader.screen(on: false) }
+        #endif
+        statusReader.groupChanged(isGroup: state.selectedServer?.isGroup == true)
 
         #if os(iOS)
         // The core ignores `wake()` on iOS: the extension is woken for every
         // push and background task. Its sleep pause ends when the screen
-        // turns on, or when the app comes to the foreground.
+        // turns on, or when the app comes to the foreground. With the screen
+        // on, an auto-select group checks its pick now and then.
         screen = ScreenObserver { [weak self] on in
-            guard on else { return }
-            self?.queue.async { self?.server?.wakeNow() }
+            self?.queue.async {
+                if on { self?.server?.wakeNow() }
+                self?.statusReader?.screen(on: on)
+            }
         }
         #endif
     }
@@ -210,6 +217,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 // On iOS: closes idle connections and stops the core's timers.
                 self.server?.pause()
             }
+            #if os(macOS)
+            self.statusReader?.screen(on: false)
+            #endif
             completionHandler()
         }
     }
@@ -220,6 +230,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             if ScreenObserver.isScreenOn { self.server?.wakeNow() }
             #else
             self.server?.wake()
+            self.statusReader?.screen(on: true)
             #endif
         }
     }

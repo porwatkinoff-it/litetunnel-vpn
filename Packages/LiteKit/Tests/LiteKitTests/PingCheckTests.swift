@@ -63,6 +63,29 @@ final class PingCheckTests: XCTestCase {
         XCTAssertTrue(passed)
     }
 
+    func testHandshakeFollowsTheTransport() throws {
+        func handshake(_ link: String) throws -> Ping.Handshake? {
+            try Ping.handshake(Server(subscriptionID: nil, parsed: ShareLink.parse(link)))
+        }
+        XCTAssertEqual(try handshake("vless://id@a.example.com:443?security=tls&type=ws#W"), .tcp)
+        XCTAssertEqual(try handshake("hy2://pw@a.example.com:443?sni=s.example.com#H"), .quic(sni: "s.example.com", alpn: ["h3"]))
+        XCTAssertNil(try handshake("hy2://pw@a.example.com:443?obfs=salamander&obfs-password=x#H"))
+        // Xray servers: by transport, not by protocol.
+        XCTAssertEqual(try handshake("vless://id@a.example.com:443?security=tls&type=xhttp#X"), .tcp)
+        XCTAssertEqual(try handshake("vless://id@a.example.com:443?security=tls&sni=s.example.com&alpn=h3&type=xhttp#X"),
+                       .quic(sni: "s.example.com", alpn: ["h3"]))
+        XCTAssertNil(try handshake("vless://id@a.example.com:443?security=tls&type=kcp#K"))
+        let hysteria: JSONValue = [
+            "protocol": "hysteria", "settings": ["version": 2, "address": "a.example.com", "port": 443],
+            "streamSettings": ["network": "hysteria", "security": "tls", "tlsSettings": ["serverName": "s.example.com"]],
+        ]
+        let parsed = try XrayOutbound.server(hysteria, name: "H")
+        XCTAssertEqual(Ping.handshake(Server(subscriptionID: nil, parsed: parsed)), .quic(sni: "s.example.com", alpn: ["h3"]))
+        var masked = hysteria
+        masked["streamSettings"]?["finalmask"] = ["udp": [["type": "salamander"]]]
+        XCTAssertNil(Ping.handshake(Server(subscriptionID: nil, parsed: try XrayOutbound.server(masked, name: "M"))))
+    }
+
     func testRowsShowingIncludeTheirGroups() {
         let sub = UUID()
         let a = server("a", sub), b = server("b", sub), c = server("c", sub)

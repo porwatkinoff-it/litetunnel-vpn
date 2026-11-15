@@ -72,7 +72,7 @@ struct HomeView: View {
             .environment(\.defaultMinListRowHeight, 36)
             .compactSectionSpacing()
             .refreshable { await model.refreshAll() }
-            .navigationTitle("LiteTunnel")
+            .navigationTitle("Link")
             .navigationDestination(for: UUID.self) { id in
                 ServerDetailView(serverID: id)
             }

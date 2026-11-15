@@ -55,22 +55,36 @@ public enum ShareLink {
         let uri = try LinkURI(line)
         guard let uuid = uri.user, !uuid.isEmpty else { throw ShareLinkError.invalid("нет UUID") }
         let port = try uri.singlePort()
-        if let encryption = uri.query["encryption"], !encryption.isEmpty, encryption != "none" {
-            throw ShareLinkError.unsupported("VLESS Encryption")
+        let q = uri.query
+        let encryption = nonEmpty(q["encryption"]) ?? "none"
+        do {
+            if encryption != "none" { throw ShareLinkError.unsupported("VLESS Encryption") }
+            var outbound: JSONValue = [
+                "type": "vless",
+                "server": .string(uri.host),
+                "server_port": .int(port),
+                "uuid": .string(uuid),
+                "packet_encoding": "xudp",
+            ]
+            if let flow = q["flow"], flow.hasPrefix("xtls-rprx-vision") {
+                outbound["flow"] = "xtls-rprx-vision"
+            }
+            outbound["tls"] = try tls(security: q["security"] ?? "none", query: q, host: uri.host)
+            outbound["transport"] = try transport(type: q["type"] ?? "tcp", query: q)
+            return ParsedServer(name: uri.name, proto: .vless, host: uri.host, port: port, outbound: outbound, shareLink: line)
+        } catch ShareLinkError.unsupported(_) {
+            var user: JSONValue = ["id": .string(uuid), "encryption": .string(encryption)]
+            if let flow = nonEmpty(q["flow"]) { user["flow"] = .string(flow) }
+            return try viaXray("vless", uri: uri, port: port, user: user, security: q["security"] ?? "none", query: q, line: line, proto: .vless)
         }
-        var outbound: JSONValue = [
-            "type": "vless",
-            "server": .string(uri.host),
-            "server_port": .int(port),
-            "uuid": .string(uuid),
-            "packet_encoding": "xudp",
-        ]
-        if let flow = uri.query["flow"], flow.hasPrefix("xtls-rprx-vision") {
-            outbound["flow"] = "xtls-rprx-vision"
-        }
-        outbound["tls"] = try tls(security: uri.query["security"] ?? "none", query: uri.query, host: uri.host)
-        outbound["transport"] = try transport(type: uri.query["type"] ?? "tcp", query: uri.query)
-        return ParsedServer(name: uri.name, proto: .vless, host: uri.host, port: port, outbound: outbound, shareLink: line)
+    }
+
+    /// The same link through Xray: for the transports and features sing-box lacks.
+    static func viaXray(_ name: String, uri: LinkURI, port: Int, user: JSONValue, security: String,
+                        query q: [String: String], line: String, proto: ProxyProtocol) throws -> ParsedServer {
+        let xray = try XrayOutbound.fromLink(protocol: name, host: uri.host, port: port, user: user,
+                                             network: q["type"] ?? "tcp", security: security, query: q)
+        return ParsedServer(name: uri.name, proto: proto, host: uri.host, port: port, outbound: XrayOutbound.wrap(xray), shareLink: line)
     }
 
     // MARK: - Trojan
@@ -85,8 +99,14 @@ public enum ShareLink {
             "server_port": .int(port),
             "password": .string(password),
         ]
-        outbound["tls"] = try tls(security: uri.query["security"] ?? "tls", query: uri.query, host: uri.host)
-        outbound["transport"] = try transport(type: uri.query["type"] ?? "tcp", query: uri.query)
+        let security = uri.query["security"] ?? "tls"
+        do {
+            outbound["tls"] = try tls(security: security, query: uri.query, host: uri.host)
+            outbound["transport"] = try transport(type: uri.query["type"] ?? "tcp", query: uri.query)
+        } catch ShareLinkError.unsupported(_) {
+            return try viaXray("trojan", uri: uri, port: port, user: ["password": .string(password)], security: security,
+                               query: uri.query, line: line, proto: .trojan)
+        }
         return ParsedServer(name: uri.name, proto: .trojan, host: uri.host, port: port, outbound: outbound, shareLink: line)
     }
 
@@ -287,9 +307,30 @@ public enum ShareLink {
         query["alpn"] = field("alpn")
         query["fp"] = field("fp")
         query["allowinsecure"] = field("allowInsecure") ?? field("insecure")
-        outbound["tls"] = try tls(security: field("tls") ?? "none", query: query, host: host)
-        outbound["transport"] = try transport(type: field("net") ?? "tcp", query: query)
-        return ParsedServer(name: field("ps") ?? "\(host):\(port)", proto: .vmess, host: host, port: port, outbound: outbound, shareLink: line)
+        let name = field("ps") ?? "\(host):\(port)"
+        let security = field("tls") ?? "none"
+        let network = field("net") ?? "tcp"
+        do {
+            outbound["tls"] = try tls(security: security, query: query, host: host)
+            outbound["transport"] = try transport(type: network, query: query)
+        } catch ShareLinkError.unsupported(_) {
+            // v2rayN's layout: mKCP keeps its seed in path, XHTTP its mode in type.
+            switch network.lowercased() {
+            case "kcp", "mkcp": query["seed"] = field("seed") ?? field("path")
+            case "xhttp", "splithttp":
+                query["mode"] = field("mode") ?? field("type").flatMap { $0 == "none" ? nil : $0 }
+                query["extra"] = field("extra")
+            default: break
+            }
+            query["pcs"] = field("pcs")
+            query["vcn"] = field("vcn")
+            var user: JSONValue = ["id": .string(uuid), "security": .string(field("scy") ?? "auto")]
+            if let aid = field("aid").flatMap(Int.init), aid > 0 { user["alterId"] = .int(aid) }
+            let xray = try XrayOutbound.fromLink(protocol: "vmess", host: host, port: port, user: user,
+                                                 network: network, security: security, query: query)
+            return ParsedServer(name: name, proto: .vmess, host: host, port: port, outbound: XrayOutbound.wrap(xray), shareLink: line)
+        }
+        return ParsedServer(name: name, proto: .vmess, host: host, port: port, outbound: outbound, shareLink: line)
     }
 
     // MARK: - Shared pieces

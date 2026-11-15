@@ -44,30 +44,27 @@ interface ProbeNetwork {
 }
 
 /**
- * TCP servers get a TCP handshake. Hysteria2 and TUIC run over QUIC, so they
- * get a QUIC Initial instead and any answer counts; with salamander obfs the
- * server does not answer plain QUIC, and the result is null (not measurable).
+ * TCP servers get a TCP handshake. Hysteria2, TUIC and XHTTP over HTTP/3 run
+ * over QUIC, so they get a QUIC Initial instead and any answer counts; with
+ * salamander obfs or finalmask the server does not answer plain QUIC, and
+ * mKCP has no handshake to time, so the result is null (not measurable).
  *
  * The name is resolved first and only the handshake is timed, so the number
  * is the round trip to the server, not to the DNS resolver.
  */
 open class SocketPinger(private val network: ProbeNetwork) : Pinger {
     override fun measure(server: Server, timeoutMs: Int): PingResult? {
-        val quic = server.proto == ProxyProtocol.HYSTERIA2 || server.proto == ProxyProtocol.TUIC
-        if (quic && server.outbound["obfs"] != null) return null
+        val handshake = Ping.handshake(server) ?: return null
         if (!ShareLink.validPort(server.port)) return PingResult.Failed
         val address = try {
             network.resolve(server.host)
         } catch (e: IOException) {
             return PingResult.Failed
         }
-        return if (quic) {
-            val tls = server.outbound["tls"]
-            val alpn = tls?.get("alpn")?.array?.mapNotNull { it.string }.orEmpty().ifEmpty { listOf("h3") }
-            val sni = tls?.get("server_name")?.string ?: server.host
-            QuicProbe.probe(InetSocketAddress(address, server.port), sni, alpn, timeoutMs, network::bind)
-        } else {
-            tcp(InetSocketAddress(address, server.port), timeoutMs)
+        return when (handshake) {
+            is Handshake.Quic ->
+                QuicProbe.probe(InetSocketAddress(address, server.port), handshake.sni, handshake.alpn, timeoutMs, network::bind)
+            Handshake.Tcp -> tcp(InetSocketAddress(address, server.port), timeoutMs)
         }
     }
 
@@ -86,7 +83,27 @@ open class SocketPinger(private val network: ProbeNetwork) : Pinger {
 
 object DefaultPinger : SocketPinger(ProbeNetwork.Default)
 
+/** What a ping times for a server, outside the tunnel. */
+sealed interface Handshake {
+    data object Tcp : Handshake
+    data class Quic(val sni: String, val alpn: List<String>) : Handshake
+}
+
 object Ping {
+    /** The handshake to time for `server`, null when it cannot be measured. */
+    fun handshake(server: Server): Handshake? {
+        XrayOutbound.inner(server.outbound)?.let { return XrayOutbound.handshake(it, server.host) }
+        return when (server.proto) {
+            ProxyProtocol.HYSTERIA2, ProxyProtocol.TUIC -> {
+                if (server.outbound["obfs"] != null) return null
+                val tls = server.outbound["tls"]
+                val alpn = tls?.get("alpn")?.array?.mapNotNull { it.string }.orEmpty().ifEmpty { listOf("h3") }
+                Handshake.Quic(tls?.get("server_name")?.string ?: server.host, alpn)
+            }
+            else -> Handshake.Tcp
+        }
+    }
+
     const val TIMEOUT_MS = 3_000
 
     /** Requests through the server get longer: the whole request has to go through. */

@@ -74,6 +74,7 @@ public sealed record Server(
         get
         {
             if (ServerGroup.Members(Outbound) is { } members) return $"Самый быстрый из {members.Count}";
+            if (XrayOutbound.Inner(Outbound) is { } xray) return XrayOutbound.Detail(xray);
             var parts = new List<string>();
             var tls = Outbound["tls"];
             if (tls is not null && tls["enabled"]?.AsBool == true)
@@ -94,10 +95,9 @@ public sealed record Server(
             var list = new List<Server>();
             foreach (var member in ServerGroup.Members(Outbound) ?? [])
             {
-                if (ProxyProtocols.Of(member["type"]?.AsString) is not { } proto) continue;
-                if (member["server"]?.AsString is not { } host) continue;
-                if (member["server_port"]?.AsInt is not { } port) continue;
-                list.Add(new Server(SubscriptionId, new ParsedServer(member["tag"]?.AsString ?? $"{host}:{port}", proto, host, port, member, null)));
+                if (XrayOutbound.EndpointOf(member) is not { } e) continue;
+                var name = member["tag"]?.AsString ?? $"{e.Host}:{e.Port}";
+                list.Add(new Server(SubscriptionId, new ParsedServer(name, e.Proto, e.Host, e.Port, member, null)));
             }
             return list;
         }

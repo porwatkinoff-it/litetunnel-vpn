@@ -1,5 +1,12 @@
 # LiteTunnel: one design for every platform
 
+The name people see is **Link**: under the icon, in window and tray titles,
+widgets, Control Center, the VPN profile and the Quick Settings tile.
+LiteTunnel stays the project name: bundle IDs, packages, files, folders and
+the User-Agent keep it, so installed copies update in place. On macOS the
+file stays LiteTunnel.app and Link comes from en/ru.lproj/InfoPlist.strings:
+Finder uses a localized name only when the plain one matches the file name.
+
 iOS, macOS, Android, Windows and Linux show the same screens, in the same
 order, with the same words, colours and icons. The iOS app is the reference:
 when this file and a platform disagree, follow this file; when this file says
@@ -85,7 +92,7 @@ SF Symbols on Apple; Material Symbols Rounded on Android, Windows and Linux.
 
 ### Home
 
-One scrolling list, title **LiteTunnel**. Toolbar: **Добавить** (add),
+One scrolling list, title **Link**. Toolbar: **Добавить** (add),
 **Пинг всех** (ping; filled while pinging), **Настройки** (settings).
 
 1. **Connect card**, centred, 12 above and below:
@@ -203,7 +210,7 @@ server itself, in two steps, and a server that fails either shows «нет св�
 | Реальный (default) | request time ÷ 3.3, rounded, at least 1 |
 | Через сервер, GET | the full request time |
 | Через сервер, HEAD | the full request time |
-| TCP | TCP handshake to the server (QUIC for Hysteria2 / TUIC); request time ÷ 3.3 where that cannot be measured |
+| TCP | TCP handshake to the server (QUIC for Hysteria2, TUIC, Xray Hysteria and XHTTP with TLS and ALPN h3); request time ÷ 3.3 where that cannot be measured (salamander obfs, finalmask, mKCP) |
 | ICMP | one echo request; request time ÷ 3.3 when the server does not answer it |
 
 - Test address: `http://www.gstatic.com/generate_204` by default; any http or
@@ -226,3 +233,69 @@ server itself, in two steps, and a server that fails either shows «нет св�
 - «Пинг после обновления подписки» pings that subscription right after it
   updates (not in background refresh, and not when «Пинг при открытии» is
   about to ping everything anyway).
+
+## Xray servers
+
+sing-box runs every server it supports. A server it does not is run through
+Xray-core inside the same core, as an outbound
+`{"type": "xray", "outbound": {<Xray outbound, no tag>}}` that routing,
+groups and ping treat like any other.
+
+- From a link: XHTTP / splithttp (with `extra`, `mode`, HTTP/3), mKCP (seed,
+  header), VLESS Encryption, TCP with an HTTP header. From Xray JSON: every
+  outbound sing-box refuses, and every one with `finalmask`.
+- The row's detail says «… · Xray», e.g. «Reality · XHTTP · Xray».
+- Skipped with a reason («Пропущено строк»), as Xray itself refuses them:
+  - «VLESS без TLS и шифрования», «Trojan без TLS»: no TLS / Reality (and,
+    for VLESS, no Encryption) to a host that is not local. Local is a
+    private, loopback or link-local address, a name without a dot, or a name
+    under `lan`, `local`, `localdomain`, `home.arpa`, `internal`, `test`,
+    `example`, `invalid`, `localhost`.
+  - «Reality с транспортом …»: Reality over anything but RAW, XHTTP, gRPC.
+  - Hysteria 1 and protocols Xray does not know.
+- `allowInsecure` is never passed. A server with a self-signed certificate
+  works only with `pcs` (pinned certificate SHA-256) or `vcn` (name to check
+  the certificate against).
+- Costs: the core is about 15 MB larger on iOS, 10 MB in the APK and 14 MB
+  on desktop. mKCP sends much more traffic than TCP and uses more battery;
+  prefer another server in the same subscription.
+
+## Auto-select
+
+An auto-select group is a sing-box `urltest` with interval 5m and tolerance
+150 ms: it leaves a working server only for one at least that much faster.
+The core does not test while paused or asleep, so the app keeps the pick
+working itself (`GroupWatch` in each core library):
+
+- After a connect or a reload: a full group test after 3 s and after 20 s.
+- Every 120 s, one test of the picked server alone (iOS and Android only
+  while the screen is on; desktop always). The tick tests only when 105 s
+  have passed since the last check or full test.
+- Screen on or the app opened: the same check, if more than 60 s have passed.
+- The pick did not answer: a full group test at once. While full tests leave
+  it without an answer (no network), they repeat after 30 s, 60 s, 120 s…,
+  at most every 600 s. An answer ends the back-off.
+
+## Quick switches
+
+- **iOS 18+, Control Center**: «Link» toggle (power symbol, connected
+  colour when on) and «Открыть Link» button with the app logo as a
+  monochrome symbol (Control Center takes symbols only, not the coloured
+  icon; the Lock Screen rectangular widget uses the same logo). The symbol
+  sits in both the widget's and the app's asset catalogs, since Control
+  Center may look it up in either. It must be a variable template (v3.0:
+  Ultralight-S, Regular-S, Black-S); Control Center draws nothing for a
+  static Regular-M one. The toggle starts the
+  saved VPN profile with no options; the tunnel runs what the app handed it
+  last. With no profile yet it says «Откройте Link и подключитесь один
+  раз…».
+- **iOS widget**, small and Lock Screen (circular, rectangular, inline): the
+  power circle in the status colour, «Подключено» / «Отключено» / …, the
+  connection time, or the selected server while disconnected. The circle
+  toggles on iOS 17+; the rest opens the app (`litetunnel://open`). No
+  timeline refresh: the app reloads widgets and controls when the status
+  changes.
+- **Android Quick Settings tile**: «Link», power icon, active while
+  connecting or connected, subtitle = server name or the status. Opens the
+  app instead when the VPN permission or a server is missing. A long press
+  opens the app. It listens to the tunnel only while the panel is open.

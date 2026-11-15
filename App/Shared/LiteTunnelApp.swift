@@ -24,7 +24,7 @@ struct LiteTunnelApp: App {
             await BackgroundRefresh.run()
         }
         #else
-        Window("LiteTunnel", id: MainWindow.id) {
+        Window("Link", id: MainWindow.id) {
             RootView()
                 .environmentObject(model)
                 .environmentObject(vpn)

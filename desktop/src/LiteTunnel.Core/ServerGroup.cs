@@ -15,11 +15,19 @@ public static class ServerGroup
 
     /// <summary>
     /// sing-box tests every 3 minutes by default, one request per member.
-    /// Rarer tests cost fewer wake-ups; a dead member is still left on the
-    /// next test. The app also tests right after a start and when its window
-    /// opens, so a pick made before the network was up does not stay.
+    /// Rarer tests cost fewer wake-ups. A dead pick does not wait for the
+    /// next one: <see cref="GroupWatch"/> checks the pick and has the core
+    /// test the group as soon as it stops answering.
     /// </summary>
     public const string Interval = "5m";
+
+    /// <summary>
+    /// Milliseconds another member must be faster by before the core moves
+    /// to it (sing-box's default is 50). A move cuts the connections in
+    /// flight, and a working server is what counts; one that fails is left
+    /// whatever this says.
+    /// </summary>
+    public const int Tolerance = 150;
 
     /// <summary>
     /// The name of the member the running group picked, by the tag the core
@@ -34,8 +42,7 @@ public static class ServerGroup
         if (Members(outbound) is not { } members || number < 1 || number > members.Count) return null;
         var member = members[number - 1];
         if (member["tag"]?.AsString is { } name) return name;
-        if (member["server"]?.AsString is not { } host) return null;
-        return member["server_port"]?.AsLong is { } port ? $"{host}:{port}" : host;
+        return XrayOutbound.EndpointOf(member) is { } e ? $"{e.Host}:{e.Port}" : null;
     }
 
     public const string AutoName = "Авто-выбор";
@@ -80,11 +87,9 @@ public static class ServerGroup
         if (covered) return null;
         foreach (var member in all)
         {
-            if (ProxyProtocols.Of(member["type"]?.AsString) is not { } proto) continue;
-            if (member["server"]?.AsString is not { } host) continue;
-            if (member["server_port"]?.AsInt is not { } port) continue;
+            if (XrayOutbound.EndpointOf(member) is not { } e) continue;
             var outbound = Json.Object(("type", Type), (AutoKey, true), ("outbounds", Json.Array(all)));
-            return new ParsedServer(AutoName, proto, host, port, outbound, null);
+            return new ParsedServer(AutoName, e.Proto, e.Host, e.Port, outbound, null);
         }
         return null;
     }
@@ -109,7 +114,8 @@ public static class ServerGroup
             ("type", Type),
             ("tag", tag),
             ("outbounds", Json.Strings(tagged.Select(m => m["tag"]!.AsString!))),
-            ("interval", Interval));
+            ("interval", Interval),
+            ("tolerance", Tolerance));
         return [group, .. tagged];
     }
 }

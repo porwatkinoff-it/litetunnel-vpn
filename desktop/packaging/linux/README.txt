@@ -1,4 +1,4 @@
-LiteTunnel @VERSION@ для Linux (x86-64)
+Link @VERSION@ для Linux (x86-64)
 
 Установка
   tar xzf LiteTunnel-@VERSION@-linux-x64.tar.gz

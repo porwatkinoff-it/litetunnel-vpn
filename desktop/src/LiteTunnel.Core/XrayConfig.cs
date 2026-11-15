@@ -3,7 +3,8 @@ namespace LiteTunnel.Core;
 /// <summary>
 /// Xray JSON, as panels serve it to Happ and v2RayTun: an array of full Xray
 /// configs, one per server, or a single config. Each proxy outbound becomes a
-/// sing-box one through the same TLS and transport code as share links. A
+/// sing-box one through the same TLS and transport code as share links, or
+/// stays an Xray one where sing-box lacks what it needs (<see cref="XrayOutbound"/>). A
 /// config with a balancer is one entry: a ServerGroup of the balanced outbounds.
 /// </summary>
 internal static class XrayConfig
@@ -86,6 +87,19 @@ internal static class XrayConfig
 
     public static ParsedServer Server(Json outbound, string? name)
     {
+        if (XrayOutbound.NeedsXray(outbound)) return XrayOutbound.Server(outbound, name);
+        try
+        {
+            return SingBox(outbound, name);
+        }
+        catch (ShareLinkException e) when (e.Kind == ShareLinkErrorKind.Unsupported)
+        {
+            return XrayOutbound.Server(outbound, name);
+        }
+    }
+
+    private static ParsedServer SingBox(Json outbound, string? name)
+    {
         var proto = (outbound["protocol"]?.AsString ?? "").ToLowerInvariant();
         var settings = outbound["settings"] ?? Empty;
         // Nested in vnext/servers, or flat in settings as newer Xray allows.
@@ -150,9 +164,6 @@ internal static class XrayConfig
             case "hysteria":
             {
                 if ((settings["version"]?.AsInt ?? 2) != 2) throw ShareLinkException.Unsupported("Hysteria 1");
-                // Salamander and the like live in finalmask, whose shape is not documented yet.
-                if (stream["finalmask"] is not null || stream["finalMask"] is not null)
-                    throw ShareLinkException.Unsupported("Hysteria с finalmask");
                 o = o.With("type", "hysteria2")
                     .With("password", stream["hysteriaSettings"]?["auth"]?.AsString ?? "");
                 // QUIC: no uTLS fingerprint and no Reality.

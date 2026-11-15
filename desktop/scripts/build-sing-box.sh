@@ -23,7 +23,7 @@ OUT="$DESKTOP/vendor/sing-box-$VERSION"
 TARGETS=("$@")
 [ ${#TARGETS[@]} -gt 0 ] || TARGETS=(windows/amd64 linux/amd64)
 
-# The Go that is installed, never a downloaded one. The release uses 1.26.x.
+# The Go that is installed, never a downloaded one. Xray-core needs 1.27+.
 export GOTOOLCHAIN="${GOTOOLCHAIN:-local}"
 GO_MINOR="$(go env GOVERSION | sed -E 's/^go1\.([0-9]+).*/\1/')"
 
@@ -52,6 +52,8 @@ fi
 
 # Skipped when already applied.
 git -C "$SRC" apply --reverse --check "$PATCH" 2>/dev/null || git -C "$SRC" apply "$PATCH"
+# The xray outbound, for the servers only Xray reaches.
+"$REPO/scripts/xray/apply.sh" "$SRC"
 
 # libcronet for naive, from the cronet-go commit the release pins.
 CRONET_GO_VERSION="$(cat "$SRC/.github/CRONET_GO_VERSION")"
@@ -104,12 +106,17 @@ for target in "${TARGETS[@]}"; do
     echo "$dir/$binary: no realityHybridIndex, the Reality patch is not in" >&2
     exit 1
   fi
+  if [ "$(strings "$dir/$binary" | grep -c 'sing-box/protocol/xray')" -eq 0 ]; then
+    echo "$dir/$binary: no xray outbound" >&2
+    exit 1
+  fi
 done
 
 {
   echo "sing-box $VERSION, built by desktop/scripts/build-sing-box.sh"
   echo "source:  https://github.com/SagerNet/sing-box $SING_BOX_TAG ($(git -C "$SRC" rev-parse HEAD))"
   echo "patch:   scripts/patches/sing-box-reality-mlkem.patch ($(shasum -a 256 "$PATCH" | cut -d' ' -f1))"
+  echo "xray:    scripts/xray ($(cat "$REPO/scripts/xray/outbound.go" "$REPO/scripts/xray/registry.patch" | shasum -a 256 | cut -d' ' -f1)), $(grep 'xtls/xray-core ' "$SRC/go.mod" | xargs)"
   echo "cronet:  https://github.com/sagernet/cronet-go $CRONET_GO_VERSION"
   echo "go:      $(go env GOVERSION)"
   echo "linux:   $(cat "$SRC/release/DEFAULT_BUILD_TAGS"),with_purego"

@@ -93,7 +93,7 @@ fun HomeScreen(model: AppModel, onToggle: () -> Unit) {
         containerColor = Lite.colors.background,
         topBar = {
             TopAppBar(
-                title = { Text("LiteTunnel", style = LiteType.title) },
+                title = { Text("Link", style = LiteType.title) },
                 actions = {
                     ToolbarIcon(R.drawable.ic_add, "Добавить") { model.push(Screen.Add) }
                     ToolbarIcon(

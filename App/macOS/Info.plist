@@ -35,6 +35,8 @@
 	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
+	<key>LSHasLocalizedDisplayName</key>
+	<true/>
 	<key>LTAppGroup</key>
 	<string>$(LT_APP_GROUP)</string>
 	<key>NSAppTransportSecurity</key>

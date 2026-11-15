@@ -66,7 +66,7 @@ xcodebuild -project LiteTunnel.xcodeproj -scheme LiteTunnel-iOS -configuration R
 mkdir -p "$TMP/Payload"
 cp -R "$DD/Build/Products/Release-iphoneos/LiteTunnel.app" "$TMP/Payload/"
 APP="$TMP/Payload/LiteTunnel.app"
-TUNNEL="$APP/PlugIns/PacketTunnel.appex"
+[ -d "$APP/PlugIns/PacketTunnel.appex" ] || die "в сборке нет расширения VPN"
 [ "$(/usr/libexec/PlistBuddy -c 'Print :LTAppGroup' "$APP/Info.plist")" = "$GROUP" ] || die "группа не попала в Info.plist"
 
 # --- sign ---
@@ -87,9 +87,10 @@ while g="$(pl "Entitlements:com.apple.security.application-groups:$i" 2>/dev/nul
   i=$((i + 1))
 done
 
-# The profile covers one App ID, so the tunnel is signed with it too, as
-# re-signing tools do. Inside out: the extension first, then the app.
-for bundle in "$TUNNEL" "$APP"; do
+# The profile covers one App ID, so the extensions (the tunnel, the widgets)
+# are signed with it too, as re-signing tools do. Inside out: the extensions
+# first, then the app.
+for bundle in "$APP"/PlugIns/*.appex "$APP"; do
   cp "$PROFILE" "$bundle/embedded.mobileprovision"
   codesign -f -s "$SHA1" --timestamp=none --generate-entitlement-der \
     --entitlements "$TMP/entitlements.plist" "$bundle"

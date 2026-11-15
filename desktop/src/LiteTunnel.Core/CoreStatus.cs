@@ -147,6 +147,28 @@ public sealed record StatusApi(int Port, string Secret)
     }
 
     /// <summary>
+    /// One request through a single outbound, such as the member a group
+    /// picked. The core keeps the result: a failure drops the member's last
+    /// one, and the group picks again among those that have one. Null when
+    /// the core itself does not answer.
+    /// </summary>
+    public async Task<bool?> ProbeAsync(HttpClient http, string outbound, CancellationToken cancellation = default)
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            using var response = await http.SendAsync(Request($"/proxies/{Uri.EscapeDataString(outbound)}/delay?timeout=5000"), timeout.Token).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode) return true;
+            return response.StatusCode is HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout ? false : null;
+        }
+        catch (Exception e) when (e is HttpRequestException or IOException || (e is OperationCanceledException && !cancellation.IsCancellationRequested))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Calls <paramref name="onSecond"/> with the bytes per second up and down,
     /// once a second as the core sends them, until cancelled or the core goes.
     /// </summary>

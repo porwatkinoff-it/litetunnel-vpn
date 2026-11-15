@@ -190,7 +190,7 @@ enum SystemProxy {
         let shell = commands
             .map { ([tool] + $0).map(shellQuoted).joined(separator: " ") }
             .joined(separator: " && ")
-        let script = "do shell script \(appleScriptQuoted(shell)) with prompt \(appleScriptQuoted("LiteTunnel хочет изменить настройки прокси.")) with administrator privileges"
+        let script = "do shell script \(appleScriptQuoted(shell)) with prompt \(appleScriptQuoted("Link хочет изменить настройки прокси.")) with administrator privileges"
         let (status, output) = execute("/usr/bin/osascript", ["-e", script])
         guard status == 0 else {
             // -128: the user pressed Cancel.

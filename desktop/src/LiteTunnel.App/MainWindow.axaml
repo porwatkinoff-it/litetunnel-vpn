@@ -5,7 +5,7 @@
         xmlns:c="using:LiteTunnel.App.Controls"
         x:Class="LiteTunnel.App.MainWindow"
         x:DataType="vm:MainViewModel"
-        Title="LiteTunnel"
+        Title="Link"
         Icon="avares://LiteTunnel/Assets/LiteTunnel.ico"
         Width="480" Height="760"
         MinWidth="420" MinHeight="640"

@@ -11,19 +11,14 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.os.SystemClock
 import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import app.litetunnel.LiteTunnelApp
 import app.litetunnel.MainActivity
 import app.litetunnel.R
-import app.litetunnel.core.ConfigBuilder
 import app.litetunnel.core.Store
 import io.nekohasekai.libbox.CommandServer
 import io.nekohasekai.libbox.CommandServerHandler
-import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.OverrideOptions
 import io.nekohasekai.libbox.SystemProxyStatus
 import java.util.concurrent.Executors
@@ -31,9 +26,9 @@ import java.util.concurrent.RejectedExecutionException
 
 /**
  * Runs sing-box over a TUN. Start, reload and stop happen on one thread, in
- * order. Nothing here wakes up on a timer: the core's own timers are paused
- * in Doze when "Умный сон" is on. The one exception is two tests of an
- * auto-select group shortly after a start or a reload.
+ * order. The core's own timers are paused in Doze when "Умный сон" is on. An
+ * auto-select group is kept on a working server by [GroupGuard], which ticks
+ * only while the screen is on.
  */
 class LiteVpnService : VpnService() {
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "tunnel") }
@@ -41,16 +36,12 @@ class LiteVpnService : VpnService() {
     private lateinit var platform: AndroidPlatform
     private var server: CommandServer? = null
     private var idleReceiver: BroadcastReceiver? = null
-    private val main = Handler(Looper.getMainLooper())
-
-    // Worker thread only.
-    private var isGroup = false
-    private var groupGeneration = 0
-    private var lastGroupTest = 0L
+    private lateinit var guard: GroupGuard
 
     override fun onCreate() {
         super.onCreate()
         platform = AndroidPlatform(this)
+        guard = GroupGuard(this)
         current = this
     }
 
@@ -95,7 +86,7 @@ class LiteVpnService : VpnService() {
             val selected = store.loadState().selectedServer
             Tunnel.connected(selected?.name)
             showNotification(selected?.name)
-            groupChanged(selected?.isGroup == true)
+            guard.changed(selected?.isGroup == true)
         } catch (e: Exception) {
             Tunnel.fail(e.message ?: "Не удалось применить настройки")
             shutdown()
@@ -105,27 +96,7 @@ class LiteVpnService : VpnService() {
     /** The app came to the front: the core resumes, and a group is tested again, once a minute at most. */
     fun wake() = post {
         server?.wake()
-        if (SystemClock.elapsedRealtime() - lastGroupTest > 60_000) testGroup()
-    }
-
-    /**
-     * The core's first test of a group can run before the network is up: then
-     * every member fails and the first one stays picked until the next test.
-     * So test again a moment after each start and reload.
-     */
-    private fun groupChanged(group: Boolean) {
-        isGroup = group
-        val generation = ++groupGeneration
-        if (!group) return
-        for (delay in longArrayOf(3_000, 20_000)) {
-            main.postDelayed({ post { if (groupGeneration == generation) testGroup() } }, delay)
-        }
-    }
-
-    private fun testGroup() {
-        if (!isGroup || server == null) return
-        lastGroupTest = SystemClock.elapsedRealtime()
-        Thread({ runCatching { Libbox.newStandaloneCommandClient().urlTest(ConfigBuilder.PROXY_TAG) } }, "group-test").start()
+        if (server != null) guard.appOpened()
     }
 
     /** After onDestroy the worker is gone; a late call has nothing left to do. */
@@ -155,7 +126,7 @@ class LiteVpnService : VpnService() {
             val selected = store.loadState().selectedServer
             Tunnel.connected(selected?.name)
             showNotification(selected?.name)
-            groupChanged(selected?.isGroup == true)
+            guard.changed(selected?.isGroup == true)
         } catch (e: Exception) {
             Tunnel.fail(e.message ?: "Не удалось подключиться")
             shutdown()
@@ -169,8 +140,7 @@ class LiteVpnService : VpnService() {
     }
 
     private fun release() {
-        isGroup = false
-        groupGeneration++
+        guard.close()
         idleReceiver?.let { runCatching { unregisterReceiver(it) } }
         idleReceiver = null
         server?.let { running ->

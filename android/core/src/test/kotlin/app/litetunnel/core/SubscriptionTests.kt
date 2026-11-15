@@ -16,7 +16,7 @@ class SubscriptionTests {
     private val lines = listOf(
         "vless://id-1@nl.example.com:443?security=reality&pbk=key&sni=www.microsoft.com&flow=xtls-rprx-vision#NL",
         "hysteria2://pw@de.example.com:443?sni=de.example.com#DE",
-        "vless://id-2@fi.example.com:443?security=reality&pbk=key&type=xhttp#FI xhttp",
+        "ssr://c3NyLmV4YW1wbGUuY29tOjQ0Mw#FI ssr",
         "happ://routing/add/eyJOYW1lIjoiUlUifQ==",
         "# comment",
     )
@@ -48,7 +48,7 @@ class SubscriptionTests {
         val result = parse(base64(lines.joinToString("\n")), headers)
         assertEquals(listOf("NL", "DE"), result.servers.map { it.name })
         assertEquals(1, result.skipped.size)
-        assertTrue(result.skipped[0].reason.contains("XHTTP"))
+        assertTrue(result.skipped[0].reason.contains("ssr"))
         assertEquals(1, result.routingLines.size)
         assertEquals("Мой VPN", result.meta.title)
         assertEquals(12, result.meta.updateIntervalHours)
@@ -108,17 +108,31 @@ class SubscriptionTests {
                   "fingerprint":"chrome"},"hysteriaSettings":{"version":2,"auth":"secret"}}}]},
               {"remarks":"US xhttp","outbounds":[
                 {"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"us.example.com","port":443,"users":[{"id":"id-3"}]}]},
-                 "streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"publicKey":"key"}}}]}
+                 "streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"publicKey":"key"}}}]},
+              {"remarks":"KR hy1","outbounds":[
+                {"tag":"proxy","protocol":"hysteria","settings":{"version":1,"address":"kr.example.com","port":443}}]}
             ]
         """.trimIndent()
         val result = parse(json)
-        assertEquals(listOf("🇳🇱 NL", "DE ws", "FI · proxy", "FI · proxy-2", "JP hy2"), result.servers.map { it.name })
+        assertEquals(listOf("🇳🇱 NL", "DE ws", "FI · proxy", "FI · proxy-2", "JP hy2", "US xhttp"), result.servers.map { it.name })
         assertEquals(
-            listOf(ProxyProtocol.VLESS, ProxyProtocol.VLESS, ProxyProtocol.TROJAN, ProxyProtocol.SHADOWSOCKS, ProxyProtocol.HYSTERIA2),
+            listOf(
+                ProxyProtocol.VLESS, ProxyProtocol.VLESS, ProxyProtocol.TROJAN, ProxyProtocol.SHADOWSOCKS,
+                ProxyProtocol.HYSTERIA2, ProxyProtocol.VLESS,
+            ),
             result.servers.map { it.proto },
         )
-        assertEquals(listOf("US xhttp"), result.skipped.map { it.line })
-        assertTrue(result.skipped[0].reason.contains("XHTTP"))
+        assertEquals(listOf("KR hy1"), result.skipped.map { it.line })
+        assertTrue(result.skipped[0].reason.contains("Hysteria 1"))
+
+        // sing-box has no XHTTP: the outbound runs through Xray as the config wrote it.
+        val us = result.servers[5]
+        assertEquals("xray", us.outbound["type"]?.string)
+        assertEquals("xhttp", us.outbound["outbound"]?.get("streamSettings")?.get("network")?.string)
+        assertNull(us.outbound["outbound"]?.get("tag"))
+        assertEquals("us.example.com", us.host)
+        assertEquals(443, us.port)
+        assertEquals("VLESS · Reality · XHTTP · Xray", Server(null, us).subtitle)
 
         val nl = result.servers[0].outbound
         assertEquals("id-1", nl["uuid"]?.string)
@@ -177,19 +191,59 @@ class SubscriptionTests {
         """.trimIndent()
         val result = parse(json)
         assertEquals(listOf("Авто-выбор"), result.servers.map { it.name })
-        assertEquals(listOf("Авто-выбор · proxy-3"), result.skipped.map { it.line })
+        assertEquals(emptyList<SkippedEntry>(), result.skipped)
 
         val server = Server(null, result.servers[0])
-        assertEquals(listOf("a.example.com", "b.example.com"), server.members.map { it.host })
-        assertEquals("Самый быстрый из 2", server.detail)
-        assertEquals("Самый быстрый из 2", server.subtitle)
+        assertEquals(listOf("a.example.com", "b.example.com", "c.example.com"), server.members.map { it.host })
+        assertEquals("Самый быстрый из 3", server.detail)
+        assertEquals("Самый быстрый из 3", server.subtitle)
 
         val config = ConfigBuilder.build(server, AppSettings(), null)
         val outbounds = config["outbounds"]?.array.orEmpty()
-        assertEquals(listOf("proxy", "proxy-1", "proxy-2", "direct"), outbounds.mapNotNull { it["tag"]?.string })
+        assertEquals(listOf("proxy", "proxy-1", "proxy-2", "proxy-3", "direct"), outbounds.mapNotNull { it["tag"]?.string })
         assertEquals("urltest", outbounds[0]["type"]?.string)
-        assertEquals(Json.strings(listOf("proxy-1", "proxy-2")), outbounds[0]["outbounds"])
+        assertEquals(Json.strings(listOf("proxy-1", "proxy-2", "proxy-3")), outbounds[0]["outbounds"])
         assertEquals("xtls-rprx-vision", outbounds[2]["flow"]?.string)
+        assertEquals("xray", outbounds[3]["type"]?.string)
+    }
+
+    @Test
+    fun xrayJsonFinalmaskStaysXray() {
+        // sing-box has Hysteria 2, but not finalmask: the outbound stays Xray's.
+        val json = """
+            {"remarks":"HY fm","outbounds":[{"tag":"proxy","protocol":"hysteria","settings":{"version":2,"address":"hy.example.com","port":443},
+              "streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"serverName":"hy.example.com","alpn":["h3"]},
+                "hysteriaSettings":{"version":2,"auth":"pw"},
+                "finalmask":{"udp":[{"type":"salamander","settings":{"password":"mask"}}]}}}]}
+        """.trimIndent()
+        val result = parse(json)
+        assertEquals(listOf("HY fm"), result.servers.map { it.name })
+        val server = result.servers[0]
+        assertEquals(ProxyProtocol.HYSTERIA2, server.proto)
+        assertEquals("hy.example.com", server.host)
+        assertEquals("xray", server.outbound["type"]?.string)
+        val mask = server.outbound["outbound"]?.get("streamSettings")?.get("finalmask")?.get("udp")?.get(0)
+        assertEquals("salamander", mask?.get("type")?.string)
+        assertEquals("TLS · finalmask · Xray", Server(null, server).detail)
+    }
+
+    @Test
+    fun autoRowTakesXrayServers() {
+        val xray = ShareLink.parse("vless://id@x.example.com:443?security=reality&pbk=k&type=xhttp#x")
+        val (state) = subscribed(parsed("a") + xray)
+        assertEquals(listOf("Авто-выбор", "a", "x"), state.servers.map { it.name })
+        val members = state.servers[0].members
+        assertEquals(listOf("a", "x"), members.map { it.name })
+        assertEquals("x.example.com", members[1].host)
+        assertEquals(ProxyProtocol.VLESS, members[1].proto)
+        assertEquals("Reality · XHTTP · Xray", members[1].detail)
+
+        val config = ConfigBuilder.build(state.servers[0], AppSettings(), null)
+        val outbounds = config["outbounds"]?.array.orEmpty()
+        assertEquals(listOf("proxy", "proxy-1", "proxy-2", "direct"), outbounds.mapNotNull { it["tag"]?.string })
+        assertEquals("xray", outbounds[2]["type"]?.string)
+        // The inner Xray outbound carries no tag of its own; sing-box tags the wrapper.
+        assertNull(outbounds[2]["outbound"]?.get("tag"))
     }
 
     @Test
@@ -238,8 +292,8 @@ class SubscriptionTests {
         state = state.apply(parse(lines.joinToString("\n")), sub.id)
         assertEquals(listOf("Manual", "Авто-выбор", "NL", "DE"), state.servers.map { it.name })
         assertEquals(1, state.subscriptions[0].skippedCount)
-        assertTrue(state.subscriptions[0].skippedReasons.single().contains("XHTTP"))
-        assertFalse("the skipped line holds keys", state.subscriptions[0].skippedReasons.single().contains("://"))
+        assertTrue(state.subscriptions[0].skippedReasons.single().contains("ssr"))
+        assertFalse("the skipped line holds keys", state.subscriptions[0].skippedReasons.single().contains("c3Ny"))
         val de = state.servers[3]
         state = state.copy(selectedServerId = de.id).updateServer(de.id) { it.copy(lastPing = PingResult.Ms(42)) }
 
@@ -313,6 +367,7 @@ class SubscriptionTests {
         assertEquals(listOf("proxy", "proxy-1", "proxy-2", "direct"), outbounds.mapNotNull { it["tag"]?.string })
         assertEquals("urltest", outbounds[0]["type"]?.string)
         assertEquals("5m", outbounds[0]["interval"]?.string)
+        assertEquals(150, outbounds[0]["tolerance"]?.int)
         assertNull(outbounds[0]["auto"])
     }
 

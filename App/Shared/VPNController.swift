@@ -1,6 +1,9 @@
 import Foundation
 import LiteKit
 import NetworkExtension
+#if os(iOS) && canImport(WidgetKit)
+import WidgetKit
+#endif
 
 /// The system VPN profile and the tunnel's state.
 ///
@@ -22,7 +25,7 @@ final class VPNController: ObservableObject {
     private var observer: NSObjectProtocol?
     private var loaded = false
 
-    static let profileName = "LiteTunnel"
+    static let profileName = "Link"
 
     /// Read from the extension itself, since a tool that re-signs the app
     /// may give it other bundle IDs.
@@ -111,9 +114,22 @@ final class VPNController: ObservableObject {
             connectedSince = nil
             return
         }
+        let before = status
         status = connection.status
         connectedSince = status == .connected ? connection.connectedDate : nil
         if status != .connected { traffic = TunnelStatus() }
+        if status != before { Self.reloadWidgets() }
+    }
+
+    /// The widgets refresh on no schedule; the app redraws them when the
+    /// status changes, whoever changed it.
+    static func reloadWidgets() {
+        #if os(iOS) && canImport(WidgetKit)
+        WidgetCenter.shared.reloadAllTimelines()
+        if #available(iOS 18.0, *) {
+            ControlCenter.shared.reloadAllControls()
+        }
+        #endif
     }
 
     // MARK: profile
@@ -131,6 +147,7 @@ final class VPNController: ObservableObject {
             || proto.providerBundleIdentifier != Self.providerBundleID
             || proto.includeAllNetworks != settings.killSwitch
             || proto.excludeLocalNetworks != settings.excludeLocalNetworks
+            || manager.localizedDescription != Self.profileName
         guard changed else { return manager }
 
         proto.providerBundleIdentifier = Self.providerBundleID

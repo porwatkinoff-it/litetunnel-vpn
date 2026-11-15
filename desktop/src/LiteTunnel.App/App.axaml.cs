@@ -112,7 +112,7 @@ public sealed partial class App : Application
         iconOn = LoadIcon("tray-on.png");
         iconOff = LoadIcon("tray-off.png");
 
-        var open = new NativeMenuItem("Открыть LiteTunnel");
+        var open = new NativeMenuItem("Открыть Link");
         open.Click += (_, _) => window?.ShowAndActivate();
         toggleItem = new NativeMenuItem("Подключить");
         toggleItem.Click += (_, _) => { if (model is not null) _ = model.ToggleConnectionAsync(); };
@@ -135,10 +135,10 @@ public sealed partial class App : Application
         tray.Icon = status == ConnectionStatus.Connected ? iconOn : iconOff;
         tray.ToolTipText = status switch
         {
-            ConnectionStatus.Connected => "LiteTunnel: подключено",
-            ConnectionStatus.Connecting or ConnectionStatus.Reasserting => "LiteTunnel: подключение…",
-            ConnectionStatus.Disconnecting => "LiteTunnel: отключение…",
-            _ => "LiteTunnel: отключено",
+            ConnectionStatus.Connected => "Link: подключено",
+            ConnectionStatus.Connecting or ConnectionStatus.Reasserting => "Link: подключение…",
+            ConnectionStatus.Disconnecting => "Link: отключение…",
+            _ => "Link: отключено",
         };
         toggleItem.Header = model.Connection.IsActive ? "Отключить" : "Подключить";
         toggleItem.IsEnabled = status is ConnectionStatus.Disconnected or ConnectionStatus.Connected;

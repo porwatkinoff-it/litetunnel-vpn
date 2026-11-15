@@ -110,6 +110,27 @@ class PingTests {
     }
 
     @Test
+    fun handshakeFollowsTheTransport() {
+        fun handshake(link: String) = Ping.handshake(Server(null, ShareLink.parse(link)))
+        assertEquals(Handshake.Tcp, handshake("vless://id@a.example.com:443?security=tls&type=ws#W"))
+        assertEquals(Handshake.Quic("s.example.com", listOf("h3")), handshake("hy2://pw@a.example.com:443?sni=s.example.com#H"))
+        assertNull(handshake("hy2://pw@a.example.com:443?obfs=salamander&obfs-password=x#H"))
+        // Xray servers: by transport, not by protocol.
+        assertEquals(Handshake.Tcp, handshake("vless://id@a.example.com:443?security=tls&type=xhttp#X"))
+        assertEquals(
+            Handshake.Quic("s.example.com", listOf("h3")),
+            handshake("vless://id@a.example.com:443?security=tls&sni=s.example.com&alpn=h3&type=xhttp#X"),
+        )
+        assertNull(handshake("vless://id@a.example.com:443?security=tls&type=kcp#K"))
+        val hysteria = """{"protocol":"hysteria","settings":{"version":2,"address":"a.example.com","port":443},
+            "streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"serverName":"s.example.com"}}}"""
+        val masked = hysteria.replace(""""security":"tls",""", """"security":"tls","finalmask":{"udp":[{"type":"salamander"}]},""")
+        fun xray(text: String) = Ping.handshake(Server(null, XrayOutbound.server(Json.parse(text), "H")))
+        assertEquals(Handshake.Quic("s.example.com", listOf("h3")), xray(hysteria))
+        assertNull(xray(masked))
+    }
+
+    @Test
     fun obfuscatedHysteriaIsNotMeasurable() {
         val server = Server(null, ShareLink.parse("hy2://pw@127.0.0.1:443?obfs=salamander&obfs-password=x#H"))
         assertNull(DefaultPinger.measure(server, 1_000))

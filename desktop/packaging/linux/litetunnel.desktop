@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=LiteTunnel
+Name=Link
 GenericName=VPN
 Comment=VPN-клиент: подписки, VLESS, Hysteria2, Trojan, Shadowsocks
 Exec=@EXEC@ %u

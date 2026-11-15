@@ -20,8 +20,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.7"
-    CURRENT_PROJECT_VERSION: "8"
+    MARKETING_VERSION: "0.1.8"
+    CURRENT_PROJECT_VERSION: "13"
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     DEAD_CODE_STRIPPING: YES
@@ -46,7 +46,7 @@ targetTemplates:
         PRODUCT_BUNDLE_IDENTIFIER: $(LT_BUNDLE_PREFIX)
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        INFOPLIST_KEY_CFBundleDisplayName: LiteTunnel
+        INFOPLIST_KEY_CFBundleDisplayName: Link
 
   Tunnel:
     type: app-extension
@@ -78,8 +78,11 @@ targets:
       # The proxy ping modes run a short-lived core in the app.
       - path: PacketTunnel/PlatformInterface.swift
       - path: PacketTunnel/Iterators.swift
+      # The Control Center button's intent runs in the app it opens.
+      - path: Widget/Shared
     dependencies:
       - target: PacketTunnel-iOS
+      - target: LiteTunnelWidget-iOS
       - framework: Frameworks/Libbox.xcframework
         embed: false
       - sdk: libresolv.tbd
@@ -87,7 +90,7 @@ targets:
     info:
       path: App/iOS/Info.plist
       properties:
-        CFBundleDisplayName: LiteTunnel
+        CFBundleDisplayName: Link
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LTAppGroup: $(LT_APP_GROUP)
@@ -141,7 +144,12 @@ targets:
     info:
       path: App/macOS/Info.plist
       properties:
+        # The .app stays LiteTunnel.app so it replaces the installed copy.
+        # Finder shows a localized name only when the plain one matches the
+        # file name, so Link lives in en/ru.lproj/InfoPlist.strings (Finder,
+        # the Dock and the menu bar).
         CFBundleDisplayName: LiteTunnel
+        LSHasLocalizedDisplayName: true
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LTAppGroup: $(LT_APP_GROUP)
@@ -182,7 +190,7 @@ targets:
     info:
       path: ProxyHelper/Info.plist
       properties:
-        CFBundleDisplayName: LiteTunnel
+        CFBundleDisplayName: Link
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         XPCService:
@@ -202,7 +210,7 @@ targets:
     info:
       path: PacketTunnel/Info-iOS.plist
       properties:
-        CFBundleDisplayName: LiteTunnel
+        CFBundleDisplayName: Link
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LTAppGroup: $(LT_APP_GROUP)
@@ -219,13 +227,47 @@ targets:
         LT_APP_GROUP: group.$(LT_BUNDLE_PREFIX)
         TARGETED_DEVICE_FAMILY: "1,2"
 
+  # Control Center switches and the Home and Lock Screen widget.
+  LiteTunnelWidget-iOS:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widget
+        excludes: ["Info.plist"]
+    dependencies:
+      - package: LiteKit
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+      - sdk: NetworkExtension.framework
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: Link
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LTAppGroup: $(LT_APP_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Config/LiteTunnelWidget-iOS.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [$(LT_APP_GROUP)]
+    settings:
+      base:
+        PRODUCT_NAME: LiteTunnelWidget
+        PRODUCT_BUNDLE_IDENTIFIER: $(LT_BUNDLE_PREFIX).widget
+        LT_APP_GROUP: group.$(LT_BUNDLE_PREFIX)
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: YES
+
   PacketTunnel-macOS:
     templates: [Tunnel]
     platform: macOS
     info:
       path: PacketTunnel/Info-macOS.plist
       properties:
-        CFBundleDisplayName: LiteTunnel
+        CFBundleDisplayName: Link
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LTAppGroup: $(LT_APP_GROUP)

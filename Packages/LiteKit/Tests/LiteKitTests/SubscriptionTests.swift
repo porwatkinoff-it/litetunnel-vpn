@@ -5,7 +5,7 @@ final class SubscriptionTests: XCTestCase {
     static let lines = [
         "vless://id-1@nl.example.com:443?security=reality&pbk=key&sni=www.microsoft.com&flow=xtls-rprx-vision#NL",
         "hysteria2://pw@de.example.com:443?sni=de.example.com#DE",
-        "vless://id-2@fi.example.com:443?security=reality&pbk=key&type=xhttp#FI xhttp",
+        "ssr://c3NyLmV4YW1wbGUuY29tOjQ0Mw#FI ssr",
         "happ://routing/add/eyJOYW1lIjoiUlUifQ==",
         "# comment",
     ]
@@ -22,7 +22,7 @@ final class SubscriptionTests: XCTestCase {
         let result = try SubscriptionParser.parse(body: body, headers: headers)
         XCTAssertEqual(result.servers.map(\.name), ["NL", "DE"])
         XCTAssertEqual(result.skipped.count, 1)
-        XCTAssertTrue(result.skipped[0].reason.contains("XHTTP"))
+        XCTAssertTrue(result.skipped[0].reason.contains("ssr"))
         XCTAssertEqual(result.routingLines.count, 1)
         XCTAssertEqual(result.meta.title, "Мой VPN")
         XCTAssertEqual(result.meta.updateIntervalHours, 12)
@@ -82,14 +82,25 @@ final class SubscriptionTests: XCTestCase {
               "fingerprint":"chrome"},"hysteriaSettings":{"version":2,"auth":"secret"}}}]},
           {"remarks":"US xhttp","outbounds":[
             {"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"us.example.com","port":443,"users":[{"id":"id-3"}]}]},
-             "streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"publicKey":"key"}}}]}
+             "streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"publicKey":"key"}}}]},
+          {"remarks":"KR hy1","outbounds":[
+            {"tag":"proxy","protocol":"hysteria","settings":{"version":1,"address":"kr.example.com","port":443}}]}
         ]
         """#
         let result = try SubscriptionParser.parse(body: Data(json.utf8), headers: [:])
-        XCTAssertEqual(result.servers.map(\.name), ["🇳🇱 NL", "DE ws", "FI · proxy", "FI · proxy-2", "JP hy2"])
-        XCTAssertEqual(result.servers.map(\.proto), [.vless, .vless, .trojan, .shadowsocks, .hysteria2])
-        XCTAssertEqual(result.skipped.map(\.line), ["US xhttp"])
-        XCTAssertTrue(result.skipped[0].reason.contains("XHTTP"))
+        XCTAssertEqual(result.servers.map(\.name), ["🇳🇱 NL", "DE ws", "FI · proxy", "FI · proxy-2", "JP hy2", "US xhttp"])
+        XCTAssertEqual(result.servers.map(\.proto), [.vless, .vless, .trojan, .shadowsocks, .hysteria2, .vless])
+        XCTAssertEqual(result.skipped.map(\.line), ["KR hy1"])
+        XCTAssertTrue(result.skipped[0].reason.contains("Hysteria 1"))
+
+        // sing-box has no XHTTP: the outbound runs through Xray as the config wrote it.
+        let us = result.servers[5]
+        XCTAssertEqual(us.outbound["type"], "xray")
+        XCTAssertEqual(us.outbound["outbound"]?["streamSettings"]?["network"], "xhttp")
+        XCTAssertNil(us.outbound["outbound"]?["tag"])
+        XCTAssertEqual(us.host, "us.example.com")
+        XCTAssertEqual(us.port, 443)
+        XCTAssertEqual(Server(subscriptionID: nil, parsed: us).subtitle, "VLESS · Reality · XHTTP · Xray")
 
         let nl = result.servers[0].outbound
         XCTAssertEqual(nl["uuid"], "id-1")
@@ -132,6 +143,43 @@ final class SubscriptionTests: XCTestCase {
         }
     }
 
+    func testXrayJSONFinalmaskStaysXray() throws {
+        // sing-box has Hysteria 2, but not finalmask: the outbound stays Xray's.
+        let json = #"""
+        {"remarks":"HY fm","outbounds":[{"tag":"proxy","protocol":"hysteria","settings":{"version":2,"address":"hy.example.com","port":443},
+          "streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"serverName":"hy.example.com","alpn":["h3"]},
+            "hysteriaSettings":{"version":2,"auth":"pw"},
+            "finalmask":{"udp":[{"type":"salamander","settings":{"password":"mask"}}]}}}]}
+        """#
+        let result = try SubscriptionParser.parse(body: Data(json.utf8), headers: [:])
+        XCTAssertEqual(result.servers.map(\.name), ["HY fm"])
+        let server = result.servers[0]
+        XCTAssertEqual(server.proto, .hysteria2)
+        XCTAssertEqual(server.host, "hy.example.com")
+        XCTAssertEqual(server.outbound["type"], "xray")
+        XCTAssertEqual(server.outbound["outbound"]?["streamSettings"]?["finalmask"]?["udp"]?[0]?["type"], "salamander")
+        XCTAssertEqual(Server(subscriptionID: nil, parsed: server).detail, "TLS · finalmask · Xray")
+    }
+
+    func testAutoRowTakesXrayServers() throws {
+        var state = AppState()
+        let xray = try ShareLink.parse("vless://id@x.example.com:443?security=reality&pbk=k&type=xhttp#x")
+        _ = subscription(&state, try parsed("a") + [xray])
+        XCTAssertEqual(state.servers.map(\.name), ["Авто-выбор", "a", "x"])
+        let members = state.servers[0].members
+        XCTAssertEqual(members.map(\.name), ["a", "x"])
+        XCTAssertEqual(members[1].host, "x.example.com")
+        XCTAssertEqual(members[1].proto, .vless)
+        XCTAssertEqual(members[1].detail, "Reality · XHTTP · Xray")
+
+        let config = ConfigBuilder.build(server: state.servers[0], settings: AppSettings(), ruleSetDirectory: nil)
+        let outbounds = config["outbounds"]?.arrayValue ?? []
+        XCTAssertEqual(outbounds.compactMap { $0["tag"]?.stringValue }, ["proxy", "proxy-1", "proxy-2", "direct"])
+        XCTAssertEqual(outbounds[2]["type"], "xray")
+        // The inner Xray outbound carries no tag of its own; sing-box tags the wrapper.
+        XCTAssertNil(outbounds[2]["outbound"]?["tag"])
+    }
+
     func testXrayJSONBalancer() throws {
         let reality = #""security":"reality","realitySettings":{"serverName":"sni.example.com","publicKey":"pbk","shortId":"ab","fingerprint":"chrome"}"#
         let json = #"""
@@ -147,19 +195,20 @@ final class SubscriptionTests: XCTestCase {
         """#
         let result = try SubscriptionParser.parse(body: Data(json.utf8), headers: [:])
         XCTAssertEqual(result.servers.map(\.name), ["Авто-выбор"])
-        XCTAssertEqual(result.skipped.map(\.line), ["Авто-выбор · proxy-3"])
+        XCTAssertEqual(result.skipped, [])
 
         let server = Server(subscriptionID: nil, parsed: result.servers[0])
-        XCTAssertEqual(server.members.map(\.host), ["a.example.com", "b.example.com"])
-        XCTAssertEqual(server.detail, "Самый быстрый из 2")
-        XCTAssertEqual(server.subtitle, "Самый быстрый из 2")
+        XCTAssertEqual(server.members.map(\.host), ["a.example.com", "b.example.com", "c.example.com"])
+        XCTAssertEqual(server.detail, "Самый быстрый из 3")
+        XCTAssertEqual(server.subtitle, "Самый быстрый из 3")
 
         let config = ConfigBuilder.build(server: server, settings: AppSettings(), ruleSetDirectory: nil)
         let outbounds = config["outbounds"]?.arrayValue ?? []
-        XCTAssertEqual(outbounds.compactMap { $0["tag"]?.stringValue }, ["proxy", "proxy-1", "proxy-2", "direct"])
+        XCTAssertEqual(outbounds.compactMap { $0["tag"]?.stringValue }, ["proxy", "proxy-1", "proxy-2", "proxy-3", "direct"])
         XCTAssertEqual(outbounds[0]["type"], "urltest")
-        XCTAssertEqual(outbounds[0]["outbounds"], .strings(["proxy-1", "proxy-2"]))
+        XCTAssertEqual(outbounds[0]["outbounds"], .strings(["proxy-1", "proxy-2", "proxy-3"]))
         XCTAssertEqual(outbounds[2]["flow"], "xtls-rprx-vision")
+        XCTAssertEqual(outbounds[3]["type"], "xray")
     }
 
     func testEmptyAndUnsupportedBodies() {
@@ -291,6 +340,7 @@ final class SubscriptionTests: XCTestCase {
         XCTAssertEqual(outbounds.compactMap { $0["tag"]?.stringValue }, ["proxy", "proxy-1", "proxy-2", "direct"])
         XCTAssertEqual(outbounds[0]["type"], "urltest")
         XCTAssertEqual(outbounds[0]["interval"], "5m")
+        XCTAssertEqual(outbounds[0]["tolerance"]?.intValue, 150)
         XCTAssertNil(outbounds[0]["auto"])
     }
 
@@ -501,8 +551,8 @@ final class SubscriptionTests: XCTestCase {
         state.apply(parsed, to: sub.id)
         XCTAssertEqual(state.subscriptions[0].skippedCount, 1)
         let reason = try XCTUnwrap(state.subscriptions[0].skippedReasons?.first)
-        XCTAssertTrue(reason.contains("XHTTP"))
-        XCTAssertFalse(reason.contains("://"), "the skipped line holds keys")
+        XCTAssertTrue(reason.contains("ssr"))
+        XCTAssertFalse(reason.contains("c3Ny"), "the skipped line holds keys")
     }
 
     func testSavedSubscriptionWithoutReasonsStillLoads() throws {

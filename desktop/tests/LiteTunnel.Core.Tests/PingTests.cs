@@ -148,6 +148,24 @@ public class PingTests
     }
 
     [Fact]
+    public void HandshakeFollowsTheTransport()
+    {
+        static Handshake? Of(string link) => Ping.HandshakeOf(Server(link));
+        Assert.Equal(Handshake.Tcp.Instance, Of("vless://id@a.example.com:443?security=tls&type=ws#W"));
+        Assert.Equal(new Handshake.Quic("s.example.com", ["h3"]), Of("hy2://pw@a.example.com:443?sni=s.example.com#H"));
+        Assert.Null(Of("hy2://pw@a.example.com:443?obfs=salamander&obfs-password=x#H"));
+        // Xray servers: by transport, not by protocol.
+        Assert.Equal(Handshake.Tcp.Instance, Of("vless://id@a.example.com:443?security=tls&type=xhttp#X"));
+        Assert.Equal(new Handshake.Quic("s.example.com", ["h3"]), Of("vless://id@a.example.com:443?security=tls&sni=s.example.com&alpn=h3&type=xhttp#X"));
+        Assert.Null(Of("vless://id@a.example.com:443?security=tls&type=kcp#K"));
+        const string hysteria = """{"protocol":"hysteria","settings":{"version":2,"address":"a.example.com","port":443},"streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"serverName":"s.example.com"}}}""";
+        var masked = hysteria.Replace("\"security\":\"tls\",", "\"security\":\"tls\",\"finalmask\":{\"udp\":[{\"type\":\"salamander\"}]},");
+        static Handshake? Xray(string text) => Ping.HandshakeOf(new Server(null, XrayOutbound.Server(Json.Parse(text), "H")));
+        Assert.Equal(new Handshake.Quic("s.example.com", ["h3"]), Xray(hysteria));
+        Assert.Null(Xray(masked));
+    }
+
+    [Fact]
     public async Task ObfuscatedHysteriaIsNotMeasurable() =>
         Assert.Null(await SocketPinger.Default.MeasureAsync(Server("hy2://pw@127.0.0.1:443?obfs=salamander&obfs-password=x#H"), 1000));
 

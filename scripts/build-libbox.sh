@@ -19,6 +19,8 @@ fi
 # Reality against Xray 26.9+ (see the patch). Skipped when already applied.
 PATCH="$ROOT/scripts/patches/sing-box-reality-mlkem.patch"
 git -C "$SRC" apply --reverse --check "$PATCH" 2>/dev/null || git -C "$SRC" apply "$PATCH"
+# The xray outbound, for the servers only Xray reaches (XHTTP, mKCP...).
+"$ROOT/scripts/xray/apply.sh" "$SRC"
 
 go install "github.com/sagernet/gomobile/cmd/gomobile@$GOMOBILE_VERSION"
 go install "github.com/sagernet/gomobile/cmd/gobind@$GOMOBILE_VERSION"

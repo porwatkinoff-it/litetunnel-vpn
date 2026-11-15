@@ -39,8 +39,10 @@ cp -R "$DD/Build/Products/Release-iphoneos/LiteTunnel.app" "$TMP/Payload/"
 APP="$TMP/Payload/LiteTunnel.app"
 entitlements Config/PacketTunnel-iOS.entitlements "$APP" Info.plist >"$TMP/tunnel-ios.plist"
 entitlements Config/LiteTunnel-iOS.entitlements "$APP" Info.plist >"$TMP/app-ios.plist"
-# Inside out: the extension first, then the app that seals it.
+entitlements Config/LiteTunnelWidget-iOS.entitlements "$APP" Info.plist >"$TMP/widget-ios.plist"
+# Inside out: the extensions first, then the app that seals them.
 codesign -f -s - --entitlements "$TMP/tunnel-ios.plist" "$APP/PlugIns/PacketTunnel.appex"
+codesign -f -s - --entitlements "$TMP/widget-ios.plist" "$APP/PlugIns/LiteTunnelWidget.appex"
 codesign -f -s - --entitlements "$TMP/app-ios.plist" "$APP"
 IPA="$OUT/LiteTunnel-$VERSION.ipa"
 rm -f "$IPA"

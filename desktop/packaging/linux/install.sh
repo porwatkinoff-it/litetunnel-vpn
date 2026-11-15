@@ -22,12 +22,12 @@ if [ "${1:-}" = "--uninstall" ]; then
   rm -rf "$DEST"
   rm -f "$DESKTOP_FILE" "$ICON"
   refresh
-  echo "LiteTunnel удалён. Настройки и подписки остались в $DATA/LiteTunnel."
+  echo "Link удалён. Настройки и подписки остались в $DATA/LiteTunnel."
   exit 0
 fi
 
 if pgrep -x LiteTunnel >/dev/null 2>&1; then
-  echo "Закройте LiteTunnel (значок в трее → «Выход») и запустите установку снова." >&2
+  echo "Закройте Link (значок в трее → «Выход») и запустите установку снова." >&2
   exit 1
 fi
 
@@ -50,7 +50,7 @@ chmod 644 "$DESKTOP_FILE"
 refresh
 command -v xdg-mime >/dev/null 2>&1 && xdg-mime default litetunnel.desktop x-scheme-handler/litetunnel || true
 
-echo "LiteTunnel установлен в $DEST и добавлен в меню приложений."
+echo "Link установлен в $DEST и добавлен в меню приложений."
 
 if [ "${1:-}" = "--setcap" ]; then
   # Only the core gets the network rights, not the app.

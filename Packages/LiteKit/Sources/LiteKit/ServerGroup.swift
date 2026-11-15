@@ -10,9 +10,14 @@ public enum ServerGroup {
     static let type = "urltest"
     /// sing-box tests every 3 minutes by default, one request per member.
     /// Rarer tests cost fewer wake-ups, but a member that died stays picked
-    /// until the next test. The tunnel also tests right after it starts and
-    /// when the app opens, see `StatusReader.groupChanged`.
+    /// until the next test. The tunnel fills the gaps: it tests right after it
+    /// starts, as soon as the picked server fails, and checks the pick when
+    /// the screen comes on, see `GroupWatch`.
     static let interval = "5m"
+    /// Milliseconds another server has to be faster by before the core moves
+    /// to it. A move cuts the connections in flight, and a working server is
+    /// what counts; one that fails is left whatever this says.
+    static let tolerance = 150
     /// The row the app adds to a subscription itself. Marked in the outbound,
     /// which keeps the saved state readable by older builds; the mark and the
     /// member names never reach the core, see `outbounds(_:tag:)`.
@@ -67,9 +72,7 @@ public enum ServerGroup {
         }
         guard !covered else { return nil }
         for member in all {
-            guard let proto = member["type"]?.stringValue.flatMap(ProxyProtocol.init(rawValue:)),
-                  let host = member["server"]?.stringValue, let port = member["server_port"]?.intValue
-            else { continue }
+            guard let (proto, host, port) = ParsedServer.endpoint(of: member) else { continue }
             let outbound: JSONValue = ["type": .string(type), autoKey: true, "outbounds": .array(all)]
             return ParsedServer(name: autoName, proto: proto, host: host, port: port, outbound: outbound, shareLink: nil)
         }
@@ -93,6 +96,7 @@ public enum ServerGroup {
             "tag": .string(tag),
             "outbounds": .strings(tagged.compactMap { $0["tag"]?.stringValue }),
             "interval": .string(interval),
+            "tolerance": .int(tolerance),
         ]
         return [group] + tagged
     }
@@ -116,9 +120,7 @@ extension Server {
     /// The servers of a group, each as its own Server; empty for a single server.
     public var members: [Server] {
         (ServerGroup.members(of: outbound) ?? []).compactMap { member in
-            guard let type = member["type"]?.stringValue, let proto = ProxyProtocol(rawValue: type),
-                  let host = member["server"]?.stringValue, let port = member["server_port"]?.intValue
-            else { return nil }
+            guard let (proto, host, port) = ParsedServer.endpoint(of: member) else { return nil }
             let name = member["tag"]?.stringValue ?? "\(host):\(port)"
             let parsed = ParsedServer(name: name, proto: proto, host: host, port: port, outbound: member, shareLink: nil)
             return Server(subscriptionID: subscriptionID, parsed: parsed)

@@ -67,6 +67,7 @@ public struct Server: Codable, Identifiable, Hashable, Sendable {
     /// Transport and security in one short label, e.g. "Reality · Vision".
     public var detail: String {
         if let members = ServerGroup.members(of: outbound) { return "Самый быстрый из \(members.count)" }
+        if let xray = XrayOutbound.inner(of: outbound) { return XrayOutbound.detail(xray) }
         var parts: [String] = []
         if let tls = outbound["tls"], tls["enabled"]?.boolValue == true {
             parts.append(tls["reality"]?["enabled"]?.boolValue == true ? "Reality" : "TLS")

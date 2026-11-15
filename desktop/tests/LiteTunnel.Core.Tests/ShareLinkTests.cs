@@ -64,12 +64,147 @@ public class ShareLinkTests
         Assert.Equal("g.example.com", s.Outbound["tls"]?["server_name"]?.AsString);
     }
 
-    [Fact]
-    public void XhttpIsReportedUnsupported()
+    // Through Xray
+
+    private static Json? At(Json? node, params object[] path)
     {
-        var e = Assert.Throws<ShareLinkException>(() => ShareLink.Parse("vless://id@1.2.3.4:443?security=reality&pbk=k&type=xhttp"));
-        Assert.Equal(ShareLinkErrorKind.Unsupported, e.Kind);
-        Assert.Equal("XHTTP (нет в ядре sing-box)", e.Detail);
+        foreach (var key in path) node = key is int i ? node?[i] : node?[(string)key];
+        return node;
+    }
+
+    [Fact]
+    public void XhttpRunsThroughXray()
+    {
+        var s = ShareLink.Parse("vless://id@x.example.com:443?security=reality&pbk=k&sid=ab&type=xhttp&path=%2Fx#X");
+        Assert.Equal(ProxyProtocol.Vless, s.Proto);
+        Assert.Equal("x.example.com", s.Host);
+        Assert.Equal(443, s.Port);
+        Assert.Equal("xray", s.Outbound["type"]?.AsString);
+        var x = s.Outbound["outbound"];
+        Assert.Equal("vless", At(x, "protocol")?.AsString);
+        Assert.Equal("x.example.com", At(x, "settings", "vnext", 0, "address")?.AsString);
+        Assert.Equal("id", At(x, "settings", "vnext", 0, "users", 0, "id")?.AsString);
+        Assert.Equal("none", At(x, "settings", "vnext", 0, "users", 0, "encryption")?.AsString);
+        Assert.Equal("xhttp", At(x, "streamSettings", "network")?.AsString);
+        Assert.Equal("/x", At(x, "streamSettings", "xhttpSettings", "path")?.AsString);
+        Assert.Equal("auto", At(x, "streamSettings", "xhttpSettings", "mode")?.AsString);
+        Assert.Equal("k", At(x, "streamSettings", "realitySettings", "publicKey")?.AsString);
+        Assert.Equal("ab", At(x, "streamSettings", "realitySettings", "shortId")?.AsString);
+        Assert.Equal("chrome", At(x, "streamSettings", "realitySettings", "fingerprint")?.AsString);
+        Assert.Equal("x.example.com", At(x, "streamSettings", "realitySettings", "serverName")?.AsString);
+        Assert.Equal("VLESS · Reality · XHTTP · Xray", new Server(null, s).Subtitle);
+    }
+
+    [Fact]
+    public void XhttpExtraAndMode()
+    {
+        var extra = Uri.EscapeDataString("""{"xPaddingBytes":"100-1000","noGRPCHeader":true,"path":"/ignored"}""");
+        var link = $"vless://id@1.2.3.4:443?security=tls&sni=a.com&type=xhttp&mode=packet-up&host=cdn.com&path=%2Fp&extra={extra}";
+        var x = At(ShareLink.Parse(link).Outbound, "outbound", "streamSettings");
+        Assert.Equal("100-1000", At(x, "xhttpSettings", "xPaddingBytes")?.AsString);
+        Assert.Equal(true, At(x, "xhttpSettings", "noGRPCHeader")?.AsBool);
+        // The link's own keys win over extra.
+        Assert.Equal("/p", At(x, "xhttpSettings", "path")?.AsString);
+        Assert.Equal("cdn.com", At(x, "xhttpSettings", "host")?.AsString);
+        Assert.Equal("packet-up", At(x, "xhttpSettings", "mode")?.AsString);
+        Assert.Equal("a.com", At(x, "tlsSettings", "serverName")?.AsString);
+    }
+
+    [Fact]
+    public void VlessEncryptionRunsThroughXray()
+    {
+        var s = ShareLink.Parse("vless://id@e.example.com:443?encryption=mlkem768x25519plus.native.0rtt.key&flow=xtls-rprx-vision&type=tcp#E");
+        var x = s.Outbound["outbound"];
+        var user = At(x, "settings", "vnext", 0, "users", 0);
+        Assert.Equal("mlkem768x25519plus.native.0rtt.key", At(user, "encryption")?.AsString);
+        Assert.Equal("xtls-rprx-vision", At(user, "flow")?.AsString);
+        Assert.Equal("raw", At(x, "streamSettings", "network")?.AsString);
+        Assert.Null(At(x, "streamSettings", "security"));
+        Assert.Equal("Vision · Encryption · Xray", new Server(null, s).Detail);
+    }
+
+    [Fact]
+    public void MkcpLink()
+    {
+        var s = ShareLink.Parse("vless://id@k.example.com:8443?security=tls&type=kcp&headerType=wechat-video&seed=s33d#K");
+        var k = At(s.Outbound, "outbound", "streamSettings");
+        Assert.Equal("kcp", At(k, "network")?.AsString);
+        Assert.Equal("wechat-video", At(k, "kcpSettings", "header", "type")?.AsString);
+        Assert.Equal("s33d", At(k, "kcpSettings", "seed")?.AsString);
+        Assert.Equal("TLS · mKCP · Xray", new Server(null, s).Detail);
+    }
+
+    [Fact]
+    public void PlainVlessAndTrojanToTheInternetAreSkipped()
+    {
+        // Xray refuses them: the id or the password would go out in the clear.
+        var vless = Assert.Throws<ShareLinkException>(() => ShareLink.Parse("vless://id@k.example.com:8443?type=kcp&seed=s#K"));
+        Assert.Equal(ShareLinkErrorKind.Unsupported, vless.Kind);
+        Assert.Equal("VLESS без TLS и шифрования", vless.Detail);
+        var trojan = Assert.Throws<ShareLinkException>(() => ShareLink.Parse("trojan://p@8.8.8.8:80?security=none&type=xhttp"));
+        Assert.Equal("Trojan без TLS", trojan.Detail);
+        // Inside the local network Xray allows them.
+        foreach (var host in new[] { "192.168.1.2", "10.0.0.5", "router.lan", "[fd00::1]" })
+            Assert.Equal("xray", ShareLink.Parse($"vless://id@{host}:8443?type=kcp#L").Outbound["type"]?.AsString);
+        // Xray runs Reality over RAW, XHTTP and gRPC only.
+        var reality = Assert.Throws<ShareLinkException>(() => ShareLink.Parse("vless://id@k.example.com:443?security=reality&pbk=k&type=kcp#R"));
+        Assert.Equal("Reality с транспортом kcp", reality.Detail);
+        // sing-box's own plain VLESS is not Xray's to refuse.
+        Assert.Equal("vless", ShareLink.Parse("vless://id@k.example.com:443?type=ws").Outbound["type"]?.AsString);
+    }
+
+    [Fact]
+    public void VmessHttpHeaderAndKcp()
+    {
+        const string http = """{"v":"2","ps":"vh","add":"v.example.com","port":"80","id":"uuid-1","aid":"0","scy":"aes-128-gcm","net":"tcp","type":"http","host":"a.com,b.com","path":"/x"}""";
+        var s = ShareLink.Parse("vmess://" + B64(http));
+        Assert.Equal("vh", s.Name);
+        Assert.Equal(ProxyProtocol.Vmess, s.Proto);
+        var x = s.Outbound["outbound"];
+        Assert.Equal("vmess", At(x, "protocol")?.AsString);
+        Assert.Equal("aes-128-gcm", At(x, "settings", "vnext", 0, "users", 0, "security")?.AsString);
+        Assert.Null(At(x, "settings", "vnext", 0, "users", 0, "alterId"));
+        var request = At(x, "streamSettings", "rawSettings", "header", "request");
+        Assert.Equal(Json.Strings(["/x"]), At(request, "path"));
+        Assert.Equal(Json.Strings(["a.com", "b.com"]), At(request, "headers", "Host"));
+        Assert.Equal("HTTP · Xray", new Server(null, s).Detail);
+
+        // Old vmess links carry the mKCP seed in path.
+        const string kcp = """{"v":"2","ps":"vk","add":"1.2.3.4","port":443,"id":"uuid-1","net":"kcp","type":"none","path":"seed1"}""";
+        var k = At(ShareLink.Parse("vmess://" + B64(kcp)).Outbound, "outbound", "streamSettings");
+        Assert.Equal("seed1", At(k, "kcpSettings", "seed")?.AsString);
+        Assert.Null(At(k, "kcpSettings", "header"));
+    }
+
+    [Fact]
+    public void TrojanXhttp()
+    {
+        var x = ShareLink.Parse("trojan://secret@t.example.com:443?type=xhttp&path=%2Ft#T").Outbound["outbound"];
+        Assert.Equal("trojan", At(x, "protocol")?.AsString);
+        Assert.Equal("t.example.com", At(x, "settings", "servers", 0, "address")?.AsString);
+        Assert.Equal("secret", At(x, "settings", "servers", 0, "password")?.AsString);
+        Assert.Equal("tls", At(x, "streamSettings", "security")?.AsString);
+        Assert.Equal("t.example.com", At(x, "streamSettings", "tlsSettings", "serverName")?.AsString);
+    }
+
+    [Fact]
+    public void XrayTlsNeverAllowsInsecure()
+    {
+        var s = ShareLink.Parse("vless://id@1.2.3.4:443?security=tls&insecure=1&allowInsecure=1&pcs=abcd&vcn=real.com&type=xhttp");
+        var t = At(s.Outbound, "outbound", "streamSettings", "tlsSettings");
+        Assert.Null(At(t, "allowInsecure"));
+        Assert.Equal("abcd", At(t, "pinnedPeerCertSha256")?.AsString);
+        Assert.Equal("real.com", At(t, "verifyPeerCertByName")?.AsString);
+        // No sni and an IP address: no server name at all.
+        Assert.Null(At(t, "serverName"));
+    }
+
+    [Fact]
+    public void TransportsSingBoxHasStayNative()
+    {
+        // ws and grpc keep sing-box's own outbound, which costs less.
+        Assert.Equal("vless", ShareLink.Parse("vless://id@1.2.3.4:443?security=tls&type=ws").Outbound["type"]?.AsString);
+        Assert.Equal("trojan", ShareLink.Parse("trojan://p@1.2.3.4:443?type=grpc").Outbound["type"]?.AsString);
     }
 
     [Fact]

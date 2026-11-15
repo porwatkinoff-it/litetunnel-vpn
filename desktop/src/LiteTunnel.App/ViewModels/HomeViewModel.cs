@@ -43,7 +43,7 @@ public sealed class HomeViewModel : PageViewModel
         Rebuild();
     }
 
-    public override string Title => "LiteTunnel";
+    public override string Title => "Link";
 
     public override IReadOnlyList<ToolAction> Actions { get; }
 

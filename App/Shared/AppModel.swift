@@ -176,6 +176,8 @@ final class AppModel: ObservableObject {
     }
 
     func open(_ url: URL) async {
+        // The widgets' own link: opening the app is all it asks.
+        if url.scheme == "litetunnel", url.host == "open" { return }
         await handle(Importer.deepLink(url))
     }
 
