@@ -518,6 +518,7 @@ class SubscriptionTests {
         )
         val state = AppState(
             subscriptions = listOf(sub),
+            lastUsedSubscriptionId = sub.id,
             settings = AppSettings(routing = RoutingMode.GLOBAL, directDomains = listOf("bank.example"), mtu = 1400,
                 remoteDns = DnsServer(DnsServer.Kind.TLS, "dns.google"), sortMode = SortMode.NAME,
                 pingMode = PingMode.PROXY_HEAD, pingUrl = "https://cp.example.com/", pingDisplay = PingDisplay.DOTS,
@@ -613,5 +614,40 @@ class SubscriptionTests {
         assertEquals(SubscriptionError.DeviceLimit to 2, outcome(plain, SubscriptionError.Empty, SubscriptionError.DeviceLimit))
         assertEquals("only a blank answer asks again", SubscriptionError.Http(500) to 1, outcome(plain, SubscriptionError.Http(500)))
         assertEquals("the address already asks for JSON", SubscriptionError.Empty to 1, outcome(plain + "json", SubscriptionError.Empty))
+    }
+
+    private fun threeSubscriptions(): AppState = listOf("A", "B", "C").fold(AppState()) { state, name ->
+        val sub = Subscription(name = name, url = "https://$name.example.com/x")
+        state.copy(subscriptions = state.subscriptions + sub).apply(result(parsed(name.lowercase())), sub.id)
+    }
+
+    private val AppState.names get() = subscriptions.map { it.name }
+
+    @Test
+    fun moveSubscriptionSwapsNeighboursAndStopsAtTheEnds() {
+        var state = threeSubscriptions()
+        val ids = state.subscriptions.map { it.id }
+        state = state.moveSubscription(ids[2], -1)
+        assertEquals(listOf("A", "C", "B"), state.names)
+        state = state.moveSubscription(ids[0], 1)
+        assertEquals(listOf("C", "A", "B"), state.names)
+        assertEquals("already first", state, state.moveSubscription(ids[2], -1))
+        assertEquals("already last", state, state.moveSubscription(ids[1], 1))
+    }
+
+    @Test
+    fun subscriptionInUseRisesOnceSoAHandMadeOrderStays() {
+        var state = threeSubscriptions()
+        state = state.copy(selectedServerId = state.servers(state.subscriptions[2].id).first().id).raiseSubscriptionInUse()
+        assertEquals(listOf("C", "A", "B"), state.names)
+
+        // Moved down by hand while still in use: it stays down.
+        state = state.moveSubscription(state.subscriptions[0].id, 1)
+        assertEquals(state, state.raiseSubscriptionInUse())
+        assertEquals(listOf("A", "C", "B"), state.names)
+
+        // Another subscription used: that one rises.
+        state = state.copy(selectedServerId = state.servers(state.subscriptions[2].id).first().id).raiseSubscriptionInUse()
+        assertEquals(listOf("B", "A", "C"), state.names)
     }
 }

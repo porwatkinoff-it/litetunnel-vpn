@@ -168,11 +168,12 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     /** Call once the VPN permission is granted. */
     fun connect() {
-        val snapshot = state
-        if (snapshot.selectedServer == null) {
+        if (state.selectedServer == null) {
             show("Сначала выберите сервер", error = true)
             return
         }
+        raiseSubscriptionInUse()
+        val snapshot = state
         viewModelScope.launch {
             withContext(disk) { store.writeConfig(snapshot) }
             VpnController.start(getApplication())
@@ -255,6 +256,20 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun removeServer(id: UUID) = commit { it.removeServer(id) }
 
     fun removeSubscription(id: UUID) = commit { it.removeSubscription(id) }
+
+    /** One place up (-1) or down (+1). Only the order changes, so the tunnel is not touched. */
+    fun moveSubscription(id: UUID, offset: Int) = commit { it.moveSubscription(id, offset) }
+
+    /**
+     * The subscription a connection goes through moves to the top, once:
+     * moved down by hand afterwards, it stays there until another is used.
+     */
+    private fun raiseSubscriptionInUse() {
+        val next = state.raiseSubscriptionInUse()
+        if (next == state) return
+        state = next
+        viewModelScope.launch { persist(next) }
+    }
 
     /** Takes only what the settings screen edits, keeping what a refresh may have written meanwhile. */
     fun editSubscription(id: UUID, name: String, url: String, intervalHours: Int, userAgent: String?) =
@@ -411,7 +426,10 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         activating = true
         viewModelScope.launch {
             try {
-                if (Tunnel.state.value.isActive) VpnController.wake()
+                if (Tunnel.state.value.isActive) {
+                    raiseSubscriptionInUse()
+                    VpnController.wake()
+                }
                 updateRuleSetsNow(force = false)
                 if (state.settings.pingOnOpen) pingNow(state.servers)
             } finally {

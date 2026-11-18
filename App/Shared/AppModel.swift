@@ -127,6 +127,7 @@ final class AppModel: ObservableObject {
             show("Сначала выберите сервер", error: true)
             return
         }
+        raiseSubscriptionInUse()
         applyConfig()
         do {
             try await vpn.connect(settings: state.settings)
@@ -221,6 +222,22 @@ final class AppModel: ObservableObject {
         commit { state in
             guard let index = state.subscriptions.firstIndex(where: { $0.id == sub.id }) else { return }
             state.subscriptions[index] = sub
+        }
+    }
+
+    /// One place up (-1) or down (+1). Only the order changes, so the
+    /// tunnel is not touched.
+    func moveSubscription(_ id: UUID, by offset: Int) {
+        withAnimation {
+            if state.moveSubscription(id, by: offset) { persist() }
+        }
+    }
+
+    /// The subscription a connection goes through moves to the top, once:
+    /// moved down by hand afterwards, it stays there until another is used.
+    private func raiseSubscriptionInUse() {
+        withAnimation {
+            if state.raiseSubscriptionInUse() { persist() }
         }
     }
 
@@ -347,7 +364,10 @@ final class AppModel: ObservableObject {
         activating = true
         defer { activating = false }
         await vpn.load()
-        if vpn.isActive { await vpn.send(.wake) }
+        if vpn.isActive {
+            raiseSubscriptionInUse()
+            await vpn.send(.wake)
+        }
         await updateRuleSets(force: false)
         if state.settings.pingOnOpen { await pingAll() }
     }

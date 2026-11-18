@@ -342,6 +342,22 @@ private fun SubscriptionHeader(model: AppModel, sub: Subscription, count: Int, c
                             runCatching { uri.openUri(url) }
                         })
                     }
+                    val subs = model.state.subscriptions
+                    if (subs.size > 1) {
+                        HorizontalDivider(color = Lite.colors.separator)
+                        if (subs.first().id != sub.id) {
+                            DropdownMenuItem(text = { Text("Переместить выше") }, onClick = {
+                                menu = false
+                                model.moveSubscription(sub.id, -1)
+                            })
+                        }
+                        if (subs.last().id != sub.id) {
+                            DropdownMenuItem(text = { Text("Переместить ниже") }, onClick = {
+                                menu = false
+                                model.moveSubscription(sub.id, 1)
+                            })
+                        }
+                    }
                     HorizontalDivider(color = Lite.colors.separator)
                     DropdownMenuItem(text = { Text("Удалить подписку", color = Lite.colors.danger) }, onClick = {
                         menu = false

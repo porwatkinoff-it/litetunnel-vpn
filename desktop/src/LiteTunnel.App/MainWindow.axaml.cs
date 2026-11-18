@@ -33,6 +33,11 @@ public sealed partial class MainWindow : Window, IShell
         this.FindControl<Border>("BannerBox")!.Tapped += (_, _) => model.HideBanner();
         this.FindControl<Panel>("Scrim")!.PointerPressed += OnScrimPressed;
         Opened += (_, _) => UpdateVisibility();
+        // Brought up with the tunnel running: its subscription goes to the top.
+        Activated += (_, _) =>
+        {
+            if (model.Connection.IsActive) model.RaiseSubscriptionInUse();
+        };
     }
 
     public MainViewModel ViewModel { get; } = null!;

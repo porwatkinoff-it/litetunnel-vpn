@@ -195,6 +195,7 @@ public sealed class AppModel : Observable
                     return;
             }
         }
+        RaiseSubscriptionInUse();
         if (await Connection.StartAsync(State, elevation) is { Length: > 0 } error) Show(error, error: true);
     }
 
@@ -277,6 +278,23 @@ public sealed class AppModel : Observable
     public void RemoveServer(Guid id) => Commit(s => s.RemoveServer(id));
 
     public void RemoveSubscription(Guid id) => Commit(s => s.RemoveSubscription(id));
+
+    /// <summary>One place up (-1) or down (+1). Only the order changes, so the tunnel is not touched.</summary>
+    public void MoveSubscription(Guid id, int offset) => Commit(s => s.MoveSubscription(id, offset));
+
+    /// <summary>
+    /// The subscription a connection goes through moves to the top, once:
+    /// moved down by hand afterwards, it stays there until another is used.
+    /// Called on connect and when the window comes up with the tunnel running.
+    /// </summary>
+    public void RaiseSubscriptionInUse()
+    {
+        var next = State.RaiseSubscriptionInUse();
+        if (ReferenceEquals(next, State)) return;
+        State = next;
+        Persist();
+        StateChanged?.Invoke();
+    }
 
     public void UpdateSubscription(Subscription sub) => Commit(s => s.UpdateSubscription(sub.Id, _ => sub));
 

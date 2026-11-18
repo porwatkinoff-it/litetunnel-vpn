@@ -93,6 +93,9 @@
                         <MenuItem Header="Настроить" Command="{Binding Edit}" />
                         <MenuItem Header="Поддержка" Command="{Binding OpenSupport}" IsVisible="{Binding HasSupport}" />
                         <MenuItem Header="Сайт провайдера" Command="{Binding OpenSite}" IsVisible="{Binding HasSite}" />
+                        <Separator IsVisible="{Binding CanMove}" />
+                        <MenuItem Header="Переместить выше" Command="{Binding MoveUp}" IsVisible="{Binding CanMoveUp}" />
+                        <MenuItem Header="Переместить ниже" Command="{Binding MoveDown}" IsVisible="{Binding CanMoveDown}" />
                         <Separator />
                         <MenuItem Header="Удалить подписку" Command="{Binding Delete}" Foreground="{DynamicResource Brush.Danger}" />
                       </MenuFlyout>

@@ -304,6 +304,23 @@ struct SubscriptionHeader: View {
                             Label("Сайт провайдера", systemImage: "safari")
                         }
                     }
+                    if model.state.subscriptions.count > 1 {
+                        Divider()
+                        if model.state.subscriptions.first?.id != subscription.id {
+                            Button {
+                                model.moveSubscription(subscription.id, by: -1)
+                            } label: {
+                                Label("Переместить выше", systemImage: "arrow.up")
+                            }
+                        }
+                        if model.state.subscriptions.last?.id != subscription.id {
+                            Button {
+                                model.moveSubscription(subscription.id, by: 1)
+                            } label: {
+                                Label("Переместить ниже", systemImage: "arrow.down")
+                            }
+                        }
+                    }
                     Divider()
                     Button(role: .destructive) {
                         confirmDelete = true

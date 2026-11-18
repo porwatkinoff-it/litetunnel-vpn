@@ -110,14 +110,21 @@ One scrolling list, title **Link**. Toolbar: **Добавить** (add),
    large and secondary, «Серверов пока нет» (headline), «Добавьте ссылку на
    подписку или сервер: vless://, hy2://, trojan://, ss:// и другие.»
    (callout, secondary, centred), primary button «Добавить».
-3. **One section per subscription**, in the user's order. Header:
+3. **One section per subscription**, in the user's order. The subscription a
+   connection goes through moves to the top when the connection starts, or
+   when the app comes up with one running, but only once per change of
+   subscription: moved down by hand afterwards, it stays where it was put
+   until another subscription is used. Selecting a server while connected
+   does not move anything, so the list never jumps under the finger. Header:
    - name (headline, primary colour, one line) and the fold chevron; tapping
      either folds the section. Folded state is remembered per device.
    - right side, 14 apart: ping (`bolt.horizontal`), refresh
      (`arrow.clockwise`), more (`ellipsis.circle`). Ping and refresh turn
      into a small spinner while they run.
    - more menu: Настроить · Поддержка (if the subscription gives a link) ·
-     Сайт провайдера (if given) · divider · Удалить подписку (danger, asks
+     Сайт провайдера (if given) · divider · Переместить выше (`arrow.up`) ·
+     Переместить ниже (`arrow.down`), each hidden at its end, both hidden
+     with their divider when there is only one subscription · divider · Удалить подписку (danger, asks
      «Удалить подписку «name» и её серверы?»).
    - usage line, if the subscription sends it: progress bar (accent, danger
      over 90%), then «12 ГБ из 100 ГБ» or «12 ГБ · без лимита» left and

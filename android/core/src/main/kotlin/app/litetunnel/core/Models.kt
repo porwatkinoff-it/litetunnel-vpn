@@ -246,6 +246,12 @@ data class AppState(
     val servers: List<Server> = emptyList(),
     val selectedServerId: UUID? = null,
     val settings: AppSettings = AppSettings(),
+    /**
+     * The subscription the last connection went through, null for a server
+     * added by hand. It goes to the top only when this changes, so an order
+     * set by hand stays until another subscription is used.
+     */
+    val lastUsedSubscriptionId: UUID? = null,
 ) {
     val selectedServer: Server? get() = servers.firstOrNull { it.id == selectedServerId }
 
@@ -399,6 +405,29 @@ data class AppState(
         val list = servers.filter { it.subscriptionId != id }
         val selected = selectedServerId?.takeIf { s -> list.any { it.id == s } } ?: list.firstOrNull()?.id
         return copy(subscriptions = subscriptions.filter { it.id != id }, servers = list, selectedServerId = selected)
+    }
+
+    /** Moves a subscription one place up ([offset] -1) or down (+1). The ends stay where they are. */
+    fun moveSubscription(id: UUID, offset: Int): AppState {
+        val index = subscriptions.indexOfFirst { it.id == id }
+        val target = index + offset
+        if (index < 0 || offset == 0 || target !in subscriptions.indices) return this
+        val list = subscriptions.toMutableList()
+        list[index] = list[target].also { list[target] = list[index] }
+        return copy(subscriptions = list)
+    }
+
+    /**
+     * Puts the subscription of the selected server first, if it is not the one
+     * used last. Call when a connection starts and when the app opens with one
+     * running.
+     */
+    fun raiseSubscriptionInUse(): AppState {
+        val server = selectedServer ?: return this
+        if (server.subscriptionId == lastUsedSubscriptionId) return this
+        val sub = subscriptions.firstOrNull { it.id == server.subscriptionId }
+        val list = if (sub == null) subscriptions else listOf(sub) + (subscriptions - sub)
+        return copy(subscriptions = list, lastUsedSubscriptionId = server.subscriptionId)
     }
 
     fun removeServer(id: UUID): AppState {

@@ -517,9 +517,10 @@ public class SubscriptionTests
             Assert.Empty(store.LoadState().Servers);
 
             var state = new AppState().AddManual([ShareLink.Parse("hy2://pw@h.example.com:443?obfs=salamander&obfs-password=x#H")]).State;
-            state = state with { Settings = state.Settings with { BlockAds = true } };
+            state = state with { Settings = state.Settings with { BlockAds = true }, LastUsedSubscriptionId = Guid.NewGuid() };
             store.Save(state);
             var loaded = store.LoadState();
+            Assert.Equal(state.LastUsedSubscriptionId, loaded.LastUsedSubscriptionId);
             Assert.Equal(state.Servers, loaded.Servers);
             Assert.Equal(state.SelectedServerId, loaded.SelectedServerId);
             Assert.True(loaded.Settings.BlockAds);
@@ -650,5 +651,43 @@ public class SubscriptionTests
         Assert.Equal((SubscriptionErrorKind.DeviceLimit, 2), await Outcome(plain, SubscriptionException.Empty(), SubscriptionException.DeviceLimit()));
         Assert.Equal((SubscriptionErrorKind.Http, 1), await Outcome(plain, SubscriptionException.Http(500)));
         Assert.Equal((SubscriptionErrorKind.Empty, 1), await Outcome(plain + "json", SubscriptionException.Empty()));
+    }
+
+    private static AppState ThreeSubscriptions() => new[] { "A", "B", "C" }.Aggregate(new AppState(), (state, name) =>
+    {
+        var sub = new Subscription { Name = name, Url = $"https://{name}.example.com/x" };
+        return (state with { Subscriptions = [.. state.Subscriptions, sub] }).Apply(Result(Named(name.ToLowerInvariant())), sub.Id);
+    });
+
+    private static string[] Names(AppState state) => state.Subscriptions.Select(s => s.Name).ToArray();
+
+    [Fact]
+    public void MoveSubscriptionSwapsNeighboursAndStopsAtTheEnds()
+    {
+        var state = ThreeSubscriptions();
+        var ids = state.Subscriptions.Select(s => s.Id).ToList();
+        state = state.MoveSubscription(ids[2], -1);
+        Assert.Equal(["A", "C", "B"], Names(state));
+        state = state.MoveSubscription(ids[0], 1);
+        Assert.Equal(["C", "A", "B"], Names(state));
+        Assert.Same(state, state.MoveSubscription(ids[2], -1));
+        Assert.Same(state, state.MoveSubscription(ids[1], 1));
+    }
+
+    [Fact]
+    public void SubscriptionInUseRisesOnceSoAHandMadeOrderStays()
+    {
+        var state = ThreeSubscriptions();
+        state = (state with { SelectedServerId = state.ServersOf(state.Subscriptions[2].Id)[0].Id }).RaiseSubscriptionInUse();
+        Assert.Equal(["C", "A", "B"], Names(state));
+
+        // Moved down by hand while still in use: it stays down.
+        state = state.MoveSubscription(state.Subscriptions[0].Id, 1);
+        Assert.Same(state, state.RaiseSubscriptionInUse());
+        Assert.Equal(["A", "C", "B"], Names(state));
+
+        // Another subscription used: that one rises.
+        state = (state with { SelectedServerId = state.ServersOf(state.Subscriptions[2].Id)[0].Id }).RaiseSubscriptionInUse();
+        Assert.Equal(["B", "A", "C"], Names(state));
     }
 }

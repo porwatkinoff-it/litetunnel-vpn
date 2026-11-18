@@ -74,6 +74,7 @@ object StateCodec {
         "servers" to state.servers.map(::encodeServer),
         "selectedServerId" to state.selectedServerId?.toString(),
         "settings" to encodeSettings(state.settings),
+        "lastUsedSubscriptionId" to state.lastUsedSubscriptionId?.toString(),
     )
 
     fun decode(json: Json): AppState {
@@ -84,6 +85,7 @@ object StateCodec {
             servers = servers,
             selectedServerId = uuid(json["selectedServerId"])?.takeIf { id -> servers.any { it.id == id } },
             settings = json["settings"]?.let(::decodeSettings) ?: AppSettings(),
+            lastUsedSubscriptionId = uuid(json["lastUsedSubscriptionId"]),
         )
     }
 

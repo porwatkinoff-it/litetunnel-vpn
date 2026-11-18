@@ -295,6 +295,13 @@ public sealed record AppState
     public Guid? SelectedServerId { get; init; }
     public AppSettings Settings { get; init; } = new();
 
+    /// <summary>
+    /// The subscription the last connection went through, null for a server
+    /// added by hand. It goes to the top only when this changes, so an order
+    /// set by hand stays until another subscription is used.
+    /// </summary>
+    public Guid? LastUsedSubscriptionId { get; init; }
+
     public Server? SelectedServer => Servers.FirstOrDefault(s => s.Id == SelectedServerId);
 
     public IReadOnlyList<Server> ServersOf(Guid? subscriptionId) => Servers.Where(s => s.SubscriptionId == subscriptionId).ToList();
@@ -460,6 +467,35 @@ public sealed record AppState
             next = next.UpdateServer(group.Id, s => s with { LastPing = fastest });
         }
         return next;
+    }
+
+    /// <summary>Moves a subscription one place up (<paramref name="offset"/> -1) or down (+1). The ends stay where they are.</summary>
+    public AppState MoveSubscription(Guid id, int offset)
+    {
+        var list = Subscriptions.ToList();
+        var index = list.FindIndex(s => s.Id == id);
+        var target = index + offset;
+        if (index < 0 || offset == 0 || target < 0 || target >= list.Count) return this;
+        (list[index], list[target]) = (list[target], list[index]);
+        return this with { Subscriptions = list };
+    }
+
+    /// <summary>
+    /// Puts the subscription of the selected server first, if it is not the one
+    /// used last. Call when a connection starts and when the window comes up
+    /// with one running.
+    /// </summary>
+    public AppState RaiseSubscriptionInUse()
+    {
+        if (SelectedServer is not { } server || server.SubscriptionId == LastUsedSubscriptionId) return this;
+        var list = Subscriptions.ToList();
+        if (list.FindIndex(s => s.Id == server.SubscriptionId) is > 0 and var index)
+        {
+            var sub = list[index];
+            list.RemoveAt(index);
+            list.Insert(0, sub);
+        }
+        return this with { Subscriptions = list, LastUsedSubscriptionId = server.SubscriptionId };
     }
 
     public AppState RemoveSubscription(Guid id)

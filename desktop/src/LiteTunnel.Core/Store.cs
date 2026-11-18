@@ -105,7 +105,8 @@ public static class StateCodec
         ("subscriptions", Json.Array(state.Subscriptions.Select(EncodeSubscription))),
         ("servers", Json.Array(state.Servers.Select(EncodeServer))),
         ("selectedServerId", state.SelectedServerId?.ToString()),
-        ("settings", EncodeSettings(state.Settings)));
+        ("settings", EncodeSettings(state.Settings)),
+        ("lastUsedSubscriptionId", state.LastUsedSubscriptionId?.ToString()));
 
     public static AppState Decode(Json json)
     {
@@ -118,6 +119,7 @@ public static class StateCodec
             Servers = servers,
             SelectedServerId = selected is { } id && servers.Any(s => s.Id == id) ? id : null,
             Settings = json["settings"] is { } settings ? DecodeSettings(settings) : new AppSettings(),
+            LastUsedSubscriptionId = Uuid(json["lastUsedSubscriptionId"]),
         };
     }
 

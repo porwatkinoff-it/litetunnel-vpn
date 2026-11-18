@@ -289,6 +289,10 @@ public struct AppState: Codable, Sendable {
     public var servers: [Server] = []
     public var selectedServerID: UUID?
     public var settings = AppSettings()
+    /// The subscription the last connection went through, nil for a server
+    /// added by hand. It goes to the top only when this changes, so an order
+    /// set by hand stays until another subscription is used.
+    public var lastUsedSubscriptionID: UUID?
 
     public init() {}
 
@@ -449,6 +453,30 @@ public struct AppState: Codable, Sendable {
         if let selected = selectedServerID, !servers.contains(where: { $0.id == selected }) {
             selectedServerID = servers.first?.id
         }
+    }
+
+    /// Moves a subscription one place up (`offset` -1) or down (+1).
+    /// Returns whether it moved: the ends stay where they are.
+    @discardableResult
+    public mutating func moveSubscription(_ id: UUID, by offset: Int) -> Bool {
+        guard let index = subscriptions.firstIndex(where: { $0.id == id }) else { return false }
+        let target = index + offset
+        guard offset != 0, subscriptions.indices.contains(target) else { return false }
+        subscriptions.swapAt(index, target)
+        return true
+    }
+
+    /// Puts the subscription of the selected server first, if it is not the
+    /// one used last. Call when a connection starts and when the app opens
+    /// with one running. Returns whether the state changed.
+    @discardableResult
+    public mutating func raiseSubscriptionInUse() -> Bool {
+        guard let server = selectedServer, server.subscriptionID != lastUsedSubscriptionID else { return false }
+        lastUsedSubscriptionID = server.subscriptionID
+        if let id = server.subscriptionID, let index = subscriptions.firstIndex(where: { $0.id == id }), index > 0 {
+            subscriptions.insert(subscriptions.remove(at: index), at: 0)
+        }
+        return true
     }
 
     public mutating func removeServer(_ id: UUID) {

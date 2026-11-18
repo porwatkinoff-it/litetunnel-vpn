@@ -340,6 +340,14 @@ public sealed class SectionViewModel : Observable
         {
             if (Subscription?.WebPageUrl is { } url) home.Main.Shell.OpenUrl(url);
         });
+        MoveUp = Command.Of(() =>
+        {
+            if (SubscriptionId is { } id) Model.MoveSubscription(id, -1);
+        });
+        MoveDown = Command.Of(() =>
+        {
+            if (SubscriptionId is { } id) Model.MoveSubscription(id, 1);
+        });
         Delete = Command.Of(() =>
         {
             if (Subscription is not { } sub) return;
@@ -402,6 +410,12 @@ public sealed class SectionViewModel : Observable
 
     public bool HasSite => Subscription?.WebPageUrl is not null;
 
+    public bool CanMoveUp => SubscriptionId is { } id && Model.State.Subscriptions.Count > 1 && Model.State.Subscriptions[0].Id != id;
+
+    public bool CanMoveDown => SubscriptionId is { } id && Model.State.Subscriptions.Count > 1 && Model.State.Subscriptions[^1].Id != id;
+
+    public bool CanMove => CanMoveUp || CanMoveDown;
+
     public bool IsPinging => Model.Pinging && SubscriptionId is not null && Model.PingingSubscription == SubscriptionId;
 
     public bool IsRefreshing => SubscriptionId is { } id && Model.IsRefreshing(id);
@@ -421,6 +435,10 @@ public sealed class SectionViewModel : Observable
     public Command OpenSupport { get; }
 
     public Command OpenSite { get; }
+
+    public Command MoveUp { get; }
+
+    public Command MoveDown { get; }
 
     public Command Delete { get; }
 

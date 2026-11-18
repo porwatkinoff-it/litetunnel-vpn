@@ -560,4 +560,50 @@ final class SubscriptionTests: XCTestCase {
         XCTAssertFalse(String(decoding: saved, as: UTF8.self).contains("skippedReasons"))
         XCTAssertNil(try JSONDecoder().decode(Subscription.self, from: saved).skippedReasons)
     }
+
+    private func threeSubscriptions() throws -> AppState {
+        var state = AppState()
+        for name in ["A", "B", "C"] {
+            let sub = Subscription(name: name, url: URL(string: "https://\(name).example.com/x")!)
+            state.subscriptions.append(sub)
+            state.apply(try SubscriptionParser.parse(body: Data(Self.lines[1].utf8), headers: [:]), to: sub.id)
+        }
+        return state
+    }
+
+    func testMoveSubscriptionSwapsNeighboursAndStopsAtTheEnds() throws {
+        var state = try threeSubscriptions()
+        let ids = state.subscriptions.map(\.id)
+        XCTAssertTrue(state.moveSubscription(ids[2], by: -1))
+        XCTAssertEqual(state.subscriptions.map(\.name), ["A", "C", "B"])
+        XCTAssertTrue(state.moveSubscription(ids[0], by: 1))
+        XCTAssertEqual(state.subscriptions.map(\.name), ["C", "A", "B"])
+        XCTAssertFalse(state.moveSubscription(ids[2], by: -1), "already first")
+        XCTAssertFalse(state.moveSubscription(ids[1], by: 1), "already last")
+        XCTAssertEqual(state.subscriptions.map(\.name), ["C", "A", "B"])
+    }
+
+    func testSubscriptionInUseRisesOnceSoAHandMadeOrderStays() throws {
+        var state = try threeSubscriptions()
+        state.selectedServerID = state.servers(in: state.subscriptions[2].id).first?.id
+        XCTAssertTrue(state.raiseSubscriptionInUse())
+        XCTAssertEqual(state.subscriptions.map(\.name), ["C", "A", "B"])
+
+        // Moved down by hand while still in use: it stays down.
+        state.moveSubscription(state.subscriptions[0].id, by: 1)
+        XCTAssertFalse(state.raiseSubscriptionInUse())
+        XCTAssertEqual(state.subscriptions.map(\.name), ["A", "C", "B"])
+
+        // Another subscription used: that one rises.
+        state.selectedServerID = state.servers(in: state.subscriptions[2].id).first?.id
+        XCTAssertTrue(state.raiseSubscriptionInUse())
+        XCTAssertEqual(state.subscriptions.map(\.name), ["B", "A", "C"])
+    }
+
+    func testOlderStateWithoutLastUsedLoads() throws {
+        let state = try threeSubscriptions()
+        let saved = try JSONEncoder().encode(state)
+        XCTAssertFalse(String(decoding: saved, as: UTF8.self).contains("lastUsedSubscriptionID"))
+        XCTAssertNil(try JSONDecoder().decode(AppState.self, from: saved).lastUsedSubscriptionID)
+    }
 }
