@@ -45,6 +45,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        // 1 is the user's switch; anything else is the system (see NEProviderStopReason).
+        Self.log.notice("stop: reason \(reason.rawValue, privacy: .public)")
         queue.async {
             self.shutdown()
             completionHandler()
@@ -238,6 +240,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
 extension PacketTunnelProvider: LibboxCommandServerHandlerProtocol {
     func serviceStop() throws {
+        Self.log.notice("stop: asked by the core")
         cancelTunnelWithError(nil)
     }
 

@@ -57,9 +57,12 @@ enum TunnelSwitch {
         }
         let before = manager.connection.status
         if on {
-            // Another VPN app may have taken the system's switch.
-            if !manager.isEnabled {
+            // Another VPN app may have taken the system's switch. Rules are
+            // there only while the app's "reconnect" setting is on.
+            let reconnect = !(manager.onDemandRules ?? []).isEmpty
+            if !manager.isEnabled || manager.isOnDemandEnabled != reconnect {
                 manager.isEnabled = true
+                manager.isOnDemandEnabled = reconnect
                 try await manager.saveToPreferences()
                 try await manager.loadFromPreferences()
             }
@@ -69,6 +72,11 @@ enum TunnelSwitch {
                 throw Failure(message: "Не удалось подключиться. Откройте Link.")
             }
         } else {
+            // On Demand first, or the system starts the tunnel again at once.
+            if manager.isOnDemandEnabled {
+                manager.isOnDemandEnabled = false
+                try? await manager.saveToPreferences()
+            }
             manager.connection.stopVPNTunnel()
         }
         // Let the status move, so the control and the widget redraw with it.

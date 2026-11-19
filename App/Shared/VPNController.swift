@@ -1,6 +1,7 @@
 import Foundation
 import LiteKit
 import NetworkExtension
+import os
 #if os(iOS) && canImport(WidgetKit)
 import WidgetKit
 #endif
@@ -26,6 +27,7 @@ final class VPNController: ObservableObject {
     private var loaded = false
 
     static let profileName = "Link"
+    private static let log = Logger(subsystem: "LiteTunnel", category: "vpn")
 
     /// Read from the extension itself, since a tool that re-signs the app
     /// may give it other bundle IDs.
@@ -134,13 +136,29 @@ final class VPNController: ObservableObject {
 
     // MARK: profile
 
+    /// Connect on any network. With On Demand on, the system starts the
+    /// tunnel again whenever it stopped without the user's switch: after a
+    /// network change, an error in the core or a kill for memory.
+    private static func reconnectRules() -> [NEOnDemandRule] {
+        let rule = NEOnDemandRuleConnect()
+        rule.interfaceTypeMatch = .any
+        return [rule]
+    }
+
     /// Creates or updates the profile. The first save shows the system's
     /// "Add VPN configuration" prompt.
+    ///
+    /// `reconnect` turns On Demand on (true) or off (false); nil keeps it as
+    /// it is. It is never on while `autoReconnect` is off.
     @discardableResult
-    private func ensureProfile(_ settings: AppSettings) async throws -> NETunnelProviderManager {
+    private func ensureProfile(_ settings: AppSettings, reconnect: Bool? = nil) async throws -> NETunnelProviderManager {
         if !loaded { await load() }
         let manager = self.manager ?? NETunnelProviderManager()
+        // The widget and Control Center may have saved it since.
+        if self.manager != nil { try? await manager.loadFromPreferences() }
         let proto = (manager.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
+        let onDemand = settings.autoReconnect && (reconnect ?? manager.isOnDemandEnabled)
+        let hasRules = !(manager.onDemandRules ?? []).isEmpty
 
         let changed = self.manager == nil
             || !manager.isEnabled
@@ -148,6 +166,8 @@ final class VPNController: ObservableObject {
             || proto.includeAllNetworks != settings.killSwitch
             || proto.excludeLocalNetworks != settings.excludeLocalNetworks
             || manager.localizedDescription != Self.profileName
+            || manager.isOnDemandEnabled != onDemand
+            || hasRules != settings.autoReconnect
         guard changed else { return manager }
 
         proto.providerBundleIdentifier = Self.providerBundleID
@@ -158,6 +178,10 @@ final class VPNController: ObservableObject {
         manager.protocolConfiguration = proto
         manager.localizedDescription = Self.profileName
         manager.isEnabled = true
+        // The rules stay while the setting is on, so the widget knows to
+        // turn On Demand back on with the tunnel.
+        manager.onDemandRules = settings.autoReconnect ? Self.reconnectRules() : nil
+        manager.isOnDemandEnabled = onDemand
 
         #if os(macOS)
         // Without the entitlement macOS fails the save with the same error as
@@ -187,7 +211,8 @@ final class VPNController: ObservableObject {
         #endif
         guard manager != nil else { return }
         let wasActive = isActive
-        try await ensureProfile(settings)
+        // A running tunnel takes the setting at once; a stopped one at the next connect.
+        try await ensureProfile(settings, reconnect: wasActive ? settings.autoReconnect : nil)
         if restartIfActive && wasActive {
             disconnect()
             await waitUntilStopped()
@@ -228,6 +253,9 @@ final class VPNController: ObservableObject {
                 throw error
             }
         }
+        // Only after the start: a start On Demand makes carries no options,
+        // so it must not win the race against this one.
+        if settings.autoReconnect { await Self.startReconnecting(manager) }
     }
 
     func disconnect() {
@@ -257,7 +285,34 @@ final class VPNController: ObservableObject {
             return
         }
         #endif
-        manager?.connection.stopVPNTunnel()
+        guard let manager else { return }
+        // On Demand first, or the system starts the tunnel again at once.
+        Task {
+            await Self.stopReconnecting(manager)
+            manager.connection.stopVPNTunnel()
+        }
+    }
+
+    private static func startReconnecting(_ manager: NETunnelProviderManager) async {
+        guard !manager.isOnDemandEnabled else { return }
+        manager.onDemandRules = reconnectRules()
+        manager.isOnDemandEnabled = true
+        do {
+            try await manager.saveToPreferences()
+        } catch {
+            log.error("on demand on: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private static func stopReconnecting(_ manager: NETunnelProviderManager) async {
+        try? await manager.loadFromPreferences()
+        guard manager.isOnDemandEnabled else { return }
+        manager.isOnDemandEnabled = false
+        do {
+            try await manager.saveToPreferences()
+        } catch {
+            log.error("on demand off: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func waitUntilStopped() async {

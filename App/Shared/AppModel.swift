@@ -148,11 +148,14 @@ final class AppModel: ObservableObject {
         guard old != new else { return }
         commit { $0.settings = new }
 
-        if old.killSwitch != new.killSwitch || old.excludeLocalNetworks != new.excludeLocalNetworks {
+        if old.killSwitch != new.killSwitch || old.excludeLocalNetworks != new.excludeLocalNetworks
+            || old.autoReconnect != new.autoReconnect {
             // These live in the system VPN profile, not in the core's config.
             Task {
                 do {
-                    try await vpn.applyProfile(settings: new, restartIfActive: true)
+                    // Reconnecting alone changes no traffic, so it needs no restart.
+                    let restart = old.killSwitch != new.killSwitch || old.excludeLocalNetworks != new.excludeLocalNetworks
+                    try await vpn.applyProfile(settings: new, restartIfActive: restart)
                 } catch {
                     show(error.localizedDescription, error: true)
                 }

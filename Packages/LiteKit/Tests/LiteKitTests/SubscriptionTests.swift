@@ -606,4 +606,17 @@ final class SubscriptionTests: XCTestCase {
         XCTAssertFalse(String(decoding: saved, as: UTF8.self).contains("lastUsedSubscriptionID"))
         XCTAssertNil(try JSONDecoder().decode(AppState.self, from: saved).lastUsedSubscriptionID)
     }
+
+    func testReconnectIsOnForOlderSettings() throws {
+        // Settings saved before the key existed.
+        let old = Data(#"{"killSwitch":true}"#.utf8)
+        let settings = try JSONDecoder().decode(AppSettings.self, from: old)
+        XCTAssertTrue(settings.autoReconnect)
+        XCTAssertTrue(settings.killSwitch)
+
+        var off = AppSettings()
+        off.autoReconnect = false
+        let saved = try JSONEncoder().encode(off)
+        XCTAssertFalse(try JSONDecoder().decode(AppSettings.self, from: saved).autoReconnect)
+    }
 }
