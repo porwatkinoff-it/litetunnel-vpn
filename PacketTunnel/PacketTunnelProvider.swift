@@ -24,6 +24,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var platform: PlatformInterface?
     private var statusReader: StatusReader?
     private var smartSleep = true
+    /// The config the core last ran without an error. A reload that fails
+    /// goes back to it, so the tunnel keeps passing traffic.
+    private var lastGoodConfig: String?
+    private var journal: TunnelJournal?
     #if os(iOS)
     private var screen: ScreenObserver?
     #endif
@@ -38,6 +42,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler(nil)
             } catch {
                 Self.log.error("start failed: \(error.localizedDescription, privacy: .public)")
+                self.journal?.failed(error.localizedDescription)
                 self.shutdown()
                 completionHandler(error)
             }
@@ -48,6 +53,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // 1 is the user's switch; anything else is the system (see NEProviderStopReason).
         Self.log.notice("stop: reason \(reason.rawValue, privacy: .public)")
         queue.async {
+            self.journal?.stopped(reason: reason.rawValue)
             self.shutdown()
             completionHandler()
         }
@@ -71,6 +77,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             try Self.setupCore(store, basePath: Self.shortBasePath(fallback: store.container))
         }
         self.store = store
+        let journal = TunnelJournal(store: store)
+        self.journal = journal
+        if journal.started() {
+            Self.log.notice("the run before this one ended without a stop")
+        }
 
         let config: String
         do {
@@ -83,6 +94,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
         let killSwitch = (protocolConfiguration as? NETunnelProviderProtocol)?.includeAllNetworks ?? false
         let platform = PlatformInterface(provider: self, includeAllNetworks: killSwitch)
+        // Connections opened before the network went away hang until they
+        // time out. Dropping them when it comes back makes apps reconnect
+        // at once, inside the running tunnel.
+        platform.onNetworkReturn = { [weak self] in
+            self?.queue.async {
+                guard let server = self?.server else { return }
+                Self.log.notice("network is back: resetting connections")
+                server.resetNetwork()
+            }
+        }
         var error: NSError?
         guard let server = LibboxNewCommandServer(self, platform, &error) else {
             throw error ?? TunnelError("Не удалось создать ядро")
@@ -91,6 +112,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         self.server = server
         try server.start()
         try server.startOrReloadService(config, options: LibboxOverrideOptions())
+        lastGoodConfig = config
         let statusReader = StatusReader()
         self.statusReader = statusReader
         #if os(iOS)
@@ -153,6 +175,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             server.close()
         }
         server = nil
+        lastGoodConfig = nil
         platform?.reset()
         platform = nil
     }
@@ -170,7 +193,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         let state = store.loadState()
         smartSleep = state.settings.smartSleep
-        try server.startOrReloadService(config, options: LibboxOverrideOptions())
+        do {
+            try server.startOrReloadService(config, options: LibboxOverrideOptions())
+            lastGoodConfig = config
+        } catch {
+            // A failed reload leaves the core stopped while the VPN still
+            // shows as on. Go back to what ran, and still tell the app.
+            Self.log.error("reload failed: \(error.localizedDescription, privacy: .public)")
+            if let lastGoodConfig, lastGoodConfig != config,
+               (try? server.startOrReloadService(lastGoodConfig, options: LibboxOverrideOptions())) != nil {
+                journal?.note("Новые настройки не применились (\(error.localizedDescription)), VPN работает на прежних")
+            } else {
+                journal?.note("Новые настройки не применились: \(error.localizedDescription)")
+            }
+            throw error
+        }
         statusReader?.groupChanged(isGroup: state.selectedServer?.isGroup == true)
     }
 
@@ -203,7 +240,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 let status = self.statusReader?.status() ?? TunnelStatus()
                 completionHandler?(try? JSONEncoder().encode(status))
             case .logs:
-                let lines = self.statusReader?.logs() ?? []
+                let lines = (self.journal?.lines(running: true) ?? []) + (self.statusReader?.logs() ?? [])
                 completionHandler?(try? JSONEncoder().encode(lines))
             case .wake:
                 self.server?.wakeNow()
@@ -240,7 +277,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
 extension PacketTunnelProvider: LibboxCommandServerHandlerProtocol {
     func serviceStop() throws {
+        // Only a command client's "close service" lands here; the app never
+        // sends one, so this is recorded in case something else does.
         Self.log.notice("stop: asked by the core")
+        journal?.note("Ядро попросило остановиться")
         cancelTunnelWithError(nil)
     }
 

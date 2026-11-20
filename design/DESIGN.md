@@ -184,14 +184,18 @@ Sections in this order, with these labels:
 2. **DNS**.
 3. **Подключение**: Kill switch (or «Локальная сеть мимо прокси» where the
    app runs as a proxy) · Локальная сеть мимо VPN · IPv6 · Фрагментация TLS.
-   No On Demand: the VPN runs only while the user wants it.
+   No On Demand: the VPN runs only while the user wants it. Inside a running
+   tunnel the core recovers by itself: connections are reset when the network
+   comes back, and a reload that fails goes back to the config that ran.
 4. **Энергосбережение**: Умный сон.
 5. **Список серверов**: Сортировка (Как в подписке / По пингу / По имени).
    Groups stay on top when sorting by ping or name.
 6. **Пинг**: Способ · Адрес проверки · Вид · Пинг при открытии · Пинг после
    обновления подписки. Footer explains the check, then the chosen way.
 7. **Дополнительно**: Определять сайт (sniffing) · Сетевой стек · MTU ·
-   Журнал · Открыть журнал ›.
+   Журнал · Открыть журнал ›. The journal starts with when the VPN went on
+   and off and why (the system's stop reason, or "оборвался" when iOS
+   unloaded the tunnel), and is readable with the VPN off.
 8. **О приложении**: Версия · Ядро sing-box (GPLv3) link.
 
 Footers are written as on iOS (`App/Shared/Views/SettingsView.swift`).

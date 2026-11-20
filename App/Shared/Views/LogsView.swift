@@ -1,8 +1,8 @@
 import LiteKit
 import SwiftUI
 
-/// The core's latest log lines, read from the tunnel every two seconds while
-/// this screen is open.
+/// When and why the VPN stopped, then the core's latest log lines, read from
+/// the tunnel every two seconds while this screen is open.
 struct LogsView: View {
     @EnvironmentObject private var vpn: VPNController
     @EnvironmentObject private var model: AppModel
@@ -16,7 +16,7 @@ struct LogsView: View {
                     Image(systemName: "text.alignleft")
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
-                    Text("Журнал виден, пока VPN включён")
+                    Text("Журнал ядра виден, пока VPN включён")
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -54,7 +54,14 @@ struct LogsView: View {
             }
         }
         .task(id: vpn.status == .connected && scenePhase == .active) {
-            guard vpn.status == .connected, scenePhase == .active else { return }
+            guard vpn.status == .connected, scenePhase == .active else {
+                // With the VPN off, the tunnel's own record of when and why
+                // it stopped, read from the shared folder once.
+                if vpn.status == .disconnected || vpn.status == .invalid {
+                    lines = TunnelJournal(store: model.store).lines(running: false)
+                }
+                return
+            }
             while !Task.isCancelled {
                 lines = await vpn.logs()
                 try? await Task.sleep(nanoseconds: 2_000_000_000)

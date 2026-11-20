@@ -15,6 +15,9 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol {
     private let monitorQueue = DispatchQueue(label: "litetunnel.path", qos: .utility)
     private let indexLock = NSLock()
     private var outsideIndex: UInt32 = 0
+    /// Called on the monitor's queue when the device gets a network again
+    /// after having none.
+    var onNetworkReturn: (() -> Void)?
 
     /// - Parameter bindOutside: for a core the app runs while the VPN may be
     ///   up. Its sockets are bound to the Wi-Fi, cellular or wired interface,
@@ -128,8 +131,12 @@ final class PlatformInterface: NSObject, LibboxPlatformInterfaceProtocol {
         let monitor = bindOutside ? NWPathMonitor(prohibitedInterfaceTypes: [.other]) : NWPathMonitor()
         let ready = DispatchSemaphore(value: 0)
         var first = true
+        var offline = false
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
+            let nowOffline = path.status == .unsatisfied
+            if offline && !nowOffline { self.onNetworkReturn?() }
+            offline = nowOffline
             self.currentPath = path
             self.indexLock.lock()
             self.outsideIndex = path.availableInterfaces.first.map { UInt32($0.index) } ?? 0
