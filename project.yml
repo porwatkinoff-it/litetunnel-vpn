@@ -20,8 +20,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.10"
-    CURRENT_PROJECT_VERSION: "15"
+    MARKETING_VERSION: "0.1.11"
+    CURRENT_PROJECT_VERSION: "16"
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     DEAD_CODE_STRIPPING: YES
@@ -78,7 +78,8 @@ targets:
       # The proxy ping modes run a short-lived core in the app.
       - path: PacketTunnel/PlatformInterface.swift
       - path: PacketTunnel/Iterators.swift
-      # The Control Center button's intent runs in the app it opens.
+      # The Control Center intents run in the app: one opens it, the
+      # switch saves the VPN profile, which only the app may do.
       - path: Widget/Shared
     dependencies:
       - target: PacketTunnel-iOS

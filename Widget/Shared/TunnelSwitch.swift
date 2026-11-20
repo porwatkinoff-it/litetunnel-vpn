@@ -1,11 +1,14 @@
 import Foundation
 import LiteKit
 import NetworkExtension
+import os
 
 /// The app's VPN profile seen from outside the app: Control Center and the
 /// widgets. A start from here carries no options; the tunnel runs what the
 /// app gave it last, as it does for a start the system makes.
 enum TunnelSwitch {
+    private static let log = Logger(subsystem: "LiteTunnel", category: "switch")
+
     struct State: Sendable {
         var status: NEVPNStatus = .invalid
         var since: Date?
@@ -73,11 +76,20 @@ enum TunnelSwitch {
             }
         } else {
             // On Demand first, or the system starts the tunnel again at once.
+            var saved = true
             if manager.isOnDemandEnabled {
                 manager.isOnDemandEnabled = false
-                try? await manager.saveToPreferences()
+                do {
+                    try await manager.saveToPreferences()
+                } catch {
+                    saved = false
+                    log.error("off: could not turn reconnect off: \(error.localizedDescription, privacy: .public)")
+                }
             }
             manager.connection.stopVPNTunnel()
+            if !saved {
+                throw Failure(message: "Не удалось отключить переподключение. Откройте Link и отключитесь там.")
+            }
         }
         // Let the status move, so the control and the widget redraw with it.
         for _ in 0..<10 where manager.connection.status == before {
