@@ -51,7 +51,6 @@ struct SettingsView: View {
                 } else {
                     Toggle("Kill switch", isOn: settings.killSwitch)
                     Toggle("Локальная сеть мимо VPN", isOn: settings.excludeLocalNetworks)
-                    Toggle("Переподключаться сам", isOn: settings.autoReconnect)
                 }
                 Toggle("IPv6", isOn: settings.ipv6)
                 Toggle("Фрагментация TLS", isOn: settings.tlsFragment)
@@ -61,7 +60,7 @@ struct SettingsView: View {
                 if VPNController.usesSystemProxy {
                     Text("На Mac без подписи Apple трафик идёт через системный прокси, а не VPN: программы, которые его не используют, ходят напрямую. Фрагментация TLS помогает, когда провайдер режет соединения по имени сайта.")
                 } else {
-                    Text("Kill switch не выпускает трафик мимо туннеля, даже пока он переподключается. «Переподключаться сам»: если система остановила VPN без вас (сменилась сеть, не хватило памяти), он включится снова; выключается только вашей кнопкой. Фрагментация TLS помогает, когда провайдер режет соединения по имени сайта.")
+                    Text("Kill switch не выпускает трафик мимо туннеля, даже пока он переподключается. Фрагментация TLS помогает, когда провайдер режет соединения по имени сайта.")
                 }
             }
 

@@ -183,10 +183,8 @@ Sections in this order, with these labels:
    рекламу · Свои правила для доменов › · Обновить базы.
 2. **DNS**.
 3. **Подключение**: Kill switch (or «Локальная сеть мимо прокси» where the
-   app runs as a proxy) · Локальная сеть мимо VPN · Переподключаться сам
-   (on by default; iOS and macOS turn On Demand on after the app's own start
-   and off before the user's stop, so a tunnel the system stopped comes back)
-   · IPv6 · Фрагментация TLS.
+   app runs as a proxy) · Локальная сеть мимо VPN · IPv6 · Фрагментация TLS.
+   No On Demand: the VPN runs only while the user wants it.
 4. **Энергосбережение**: Умный сон.
 5. **Список серверов**: Сортировка (Как в подписке / По пингу / По имени).
    Groups stay on top when sorting by ping or name.

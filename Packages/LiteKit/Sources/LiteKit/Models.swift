@@ -233,9 +233,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var killSwitch = false
     public var excludeLocalNetworks = true
     public var smartSleep = true
-    /// The system starts the tunnel again after it stops without the user:
-    /// a network change, an error in the core, memory pressure.
-    public var autoReconnect = true
     public var tlsFragment = false
     public var blockAds = false
     public var sniffing = true
@@ -271,7 +268,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
         killSwitch = try c.decodeIfPresent(Bool.self, forKey: .killSwitch) ?? d.killSwitch
         excludeLocalNetworks = try c.decodeIfPresent(Bool.self, forKey: .excludeLocalNetworks) ?? d.excludeLocalNetworks
         smartSleep = try c.decodeIfPresent(Bool.self, forKey: .smartSleep) ?? d.smartSleep
-        autoReconnect = try c.decodeIfPresent(Bool.self, forKey: .autoReconnect) ?? d.autoReconnect
         tlsFragment = try c.decodeIfPresent(Bool.self, forKey: .tlsFragment) ?? d.tlsFragment
         blockAds = try c.decodeIfPresent(Bool.self, forKey: .blockAds) ?? d.blockAds
         sniffing = try c.decodeIfPresent(Bool.self, forKey: .sniffing) ?? d.sniffing

@@ -60,12 +60,12 @@ enum TunnelSwitch {
         }
         let before = manager.connection.status
         if on {
-            // Another VPN app may have taken the system's switch. Rules are
-            // there only while the app's "reconnect" setting is on.
-            let reconnect = !(manager.onDemandRules ?? []).isEmpty
-            if !manager.isEnabled || manager.isOnDemandEnabled != reconnect {
+            // Another VPN app may have taken the system's switch. On Demand
+            // stays off: a profile from 0.1.10 or 0.1.11 may still have it.
+            if !manager.isEnabled || manager.isOnDemandEnabled {
                 manager.isEnabled = true
-                manager.isOnDemandEnabled = reconnect
+                manager.isOnDemandEnabled = false
+                manager.onDemandRules = nil
                 try await manager.saveToPreferences()
                 try await manager.loadFromPreferences()
             }
@@ -75,15 +75,17 @@ enum TunnelSwitch {
                 throw Failure(message: "Не удалось подключиться. Откройте Link.")
             }
         } else {
-            // On Demand first, or the system starts the tunnel again at once.
+            // A profile from 0.1.10 or 0.1.11 may still have On Demand on;
+            // the system would start the tunnel again at once.
             var saved = true
             if manager.isOnDemandEnabled {
                 manager.isOnDemandEnabled = false
+                manager.onDemandRules = nil
                 do {
                     try await manager.saveToPreferences()
                 } catch {
                     saved = false
-                    log.error("off: could not turn reconnect off: \(error.localizedDescription, privacy: .public)")
+                    log.error("off: could not turn On Demand off: \(error.localizedDescription, privacy: .public)")
                 }
             }
             manager.connection.stopVPNTunnel()

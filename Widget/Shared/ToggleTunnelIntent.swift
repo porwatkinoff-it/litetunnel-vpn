@@ -11,8 +11,8 @@ enum WidgetKind {
 /// Connects or disconnects without opening the app.
 ///
 /// A live-activity intent runs in the app's process, not the widget's. Only
-/// the app may save the VPN profile, and turning off needs a save: with
-/// "reconnect" on, the system starts a tunnel it was only asked to stop.
+/// the app may save the VPN profile: after another VPN app took the switch,
+/// or to clear the On Demand that 0.1.10 and 0.1.11 left on.
 @available(iOS 17.0, *)
 struct ToggleTunnelIntent: SetValueIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Подключить Link"
